@@ -1,0 +1,37 @@
+package com.school.feemanager.data
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+
+@Database(
+    entities = [
+        FeeRateEntity::class, SchoolSettingsEntity::class, StudentEntity::class, StudentFeeEntity::class,
+        PaymentScheduleEntity::class, PaymentTransactionEntity::class, ReceiptEntity::class,
+        UserEntity::class, AuditLogEntity::class,
+    ],
+    version = 1,
+    exportSchema = true,
+)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun settingsDao(): SettingsDao
+    abstract fun feeRateDao(): FeeRateDao
+    abstract fun studentDao(): StudentDao
+    abstract fun studentFeeDao(): StudentFeeDao
+    abstract fun scheduleDao(): ScheduleDao
+    abstract fun transactionDao(): TransactionDao
+    abstract fun receiptDao(): ReceiptDao
+    abstract fun userDao(): UserDao
+    abstract fun auditDao(): AuditDao
+
+    companion object {
+        const val NAME = "school_fees.db"
+
+        fun build(context: Context): AppDatabase =
+            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)
+                // TRUNCATE journal keeps the whole database in ONE file, so backup/restore is a plain file copy.
+                .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
+                .build()
+    }
+}

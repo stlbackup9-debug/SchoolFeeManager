@@ -1,0 +1,6 @@
+== FIXED formulas (approved): 50 students x 11 columns = 550 cells: exact 550, within 0.5 kyat 0, different 0
+   differences by column: none
+   schedules: 19 identical to Excel, 31 identical except last part absorbs Excel rounding gap
+== ORIGINAL formulas: 50 students x 11 columns = 550 cells: exact 308, within 0.5 kyat 0, different 242
+   differences by column: {'Instrument': 50, 'Gross': 50, 'Net': 50, 'Balance': 50, 'DiscAmt': 40, 'Hostel': 2}
+   schedules: 0 identical to Excel, 0 identical except last part absorbs Excel rounding gap
