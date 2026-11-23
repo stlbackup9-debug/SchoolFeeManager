@@ -1,6 +1,9 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.net.URI
 import java.security.MessageDigest
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 /*
  * Windows (desktop) version of School Fee Manager.
@@ -132,11 +135,52 @@ val windowsImage by tasks.registering(Sync::class) {
     preserve { include("SchoolFeeManager.exe") }
 }
 
+/**
+ * Makes the Windows package smaller (≈ –45 MB):
+ *  - material-icons-extended: keep only the icon classes the app's code refers to;
+ *  - sqlite-jdbc: keep only the Windows x64 native library.
+ */
+val trimWindowsJars by tasks.registering {
+    dependsOn(windowsImage)
+    doLast {
+        val app = imageDir.get().dir("app").asFile
+        val appJar = app.listFiles()!!.single { it.name == "desktop-$appVersion.jar" }
+        val iconRef = Regex("androidx/compose/material/icons/[a-z/]+/[A-Za-z0-9_]+Kt")
+        val used = HashSet<String>()
+        ZipFile(appJar).use { z ->
+            z.entries().asSequence().filter { it.name.endsWith(".class") }.forEach { e ->
+                val text = String(z.getInputStream(e).readBytes(), Charsets.ISO_8859_1)
+                iconRef.findAll(text).forEach { used += it.value }
+            }
+        }
+        fun rewrite(jar: File, keep: (String) -> Boolean) {
+            val tmp = File(jar.path + ".tmp")
+            ZipFile(jar).use { z ->
+                ZipOutputStream(tmp.outputStream()).use { out ->
+                    z.entries().asSequence().filter { keep(it.name) }.forEach { e ->
+                        out.putNextEntry(ZipEntry(e.name))
+                        if (!e.isDirectory) z.getInputStream(e).use { it.copyTo(out) }
+                        out.closeEntry()
+                    }
+                }
+            }
+            jar.delete(); tmp.renameTo(jar)
+        }
+        app.listFiles()!!.filter { it.name.startsWith("material-icons-extended-") }.forEach { jar ->
+            rewrite(jar) { n -> !n.endsWith(".class") || used.any { u -> n == "$u.class" || n.startsWith("$u$") } }
+        }
+        app.listFiles()!!.filter { it.name.startsWith("sqlite-jdbc-") }.forEach { jar ->
+            rewrite(jar) { n -> !n.startsWith("org/sqlite/native/") || n.startsWith("org/sqlite/native/Windows/x86_64/") || n.endsWith("/") }
+        }
+        logger.lifecycle("Kept ${used.size} icon classes; sqlite-jdbc limited to Windows x64")
+    }
+}
+
 fun makensis(vararg args: String) = listOf("makensis", "-V2", "-INPUTCHARSET", "UTF8") + args
 
 val windowsLauncher by tasks.registering(Exec::class) {
     description = "Builds SchoolFeeManager.exe (starts the bundled Java runtime)."
-    dependsOn(windowsImage)
+    dependsOn(trimWindowsJars)
     inputs.file("packaging/launcher.nsi"); inputs.file("packaging/SchoolFeeManager.ico")
     outputs.file(imageDir.map { it.file("SchoolFeeManager.exe") })
     commandLine(makensis(
