@@ -184,7 +184,7 @@ fun <T> SelectBox(options: List<T>, selected: T, label: (T) -> String, onSelect:
     Box(modifier) {
         FieldBox(Modifier.clickable { open = true }) {
             Text(label(selected), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(4.dp))
             Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = School.Text)
         }
         DropdownMenu(open, onDismissRequest = { open = false }) {

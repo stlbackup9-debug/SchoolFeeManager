@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.captureToImage
@@ -165,6 +166,23 @@ class DesktopUiTest {
         waitText("row(s)", substring = true)
         shot("11-report")
 
+        // Settings → Fee rates (table): change G-3 training, save
+        first("Settings").performClick()
+        waitText("Fee rates")
+        first("Fee rates").performClick()
+        waitText("Fees by class")
+        shot("12a-fee-rates")
+        first("220000").performTextReplacement("230000")
+        waitText("Unsaved changes")
+        first("Save fee rates").performClick()
+        waitText("Save new fee rates?")
+        first("Save").performClick()
+        waitText("Recalculate existing students?")
+        first("Cancel").performClick()
+        waitUntil(timeoutMillis = 5_000) { runBlocking { repo.snapshot().first().card.rateFor("G-3")!!.trainingFee } == 230000L }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Unsaved changes").fetchSemanticsNodes().isEmpty() }
+        shot("12b-fee-rates-saved")
+        // back to Settings for the Data page
         first("Settings").performClick()
         waitText("Data: import Excel / CSV, export, backup")
         first("Data: import Excel / CSV, export, backup").performClick()

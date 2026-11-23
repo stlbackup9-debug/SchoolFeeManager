@@ -415,6 +415,10 @@ object DesktopScreens : TopScreens {
         }
     }
 
+    // ============================================================ Settings → Fee rates
+    @Composable
+    override fun FeeRates(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) = DesktopFeeRatesPage(vm, snap, session, nav)
+
     // ============================================================ Reports
     @Composable
     override fun Reports(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) {

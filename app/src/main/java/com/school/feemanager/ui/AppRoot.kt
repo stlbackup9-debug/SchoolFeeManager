@@ -81,10 +81,19 @@ private val TABS = listOf(
 
 /** Navigation actions shared by every screen (phone and Windows). */
 class AppNav(val controller: NavHostController) {
-    fun top(route: String) = controller.navigate(route) {
-        popUpTo(controller.graph.findStartDestination().id) { saveState = true }
-        launchSingleTop = true
-        restoreState = true
+    /**
+     * Opens a main section. Clicking the section you are already in (e.g. Settings while on Fee rates)
+     * goes back to its main page; switching sections keeps where you were in each.
+     */
+    fun top(route: String) {
+        val current = controller.currentDestination?.route.orEmpty()
+        if (current == route) return
+        if (current.startsWith("$route/") && controller.popBackStack(route, inclusive = false)) return
+        controller.navigate(route) {
+            popUpTo(controller.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = !current.startsWith("$route/")
+        }
     }
     fun student(id: Long) = controller.navigate("students/$id")
     fun newStudent() = controller.navigate("students/edit/-1")
@@ -106,6 +115,9 @@ interface TopScreens {
     @Composable fun Payables(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
     @Composable fun Collection(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
     @Composable fun Reports(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
+    /** Settings → Fee rates (phone: one card per class; Windows: an editable table). */
+    @Composable fun FeeRates(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) =
+        PageFrame { FeeRatesScreen(vm, snap, session, onBack = { nav.back() }) }
 }
 
 object MobileScreens : TopScreens {
@@ -200,6 +212,7 @@ private fun LoginScreen(vm: AppViewModel, snap: AppSnapshot, busy: Boolean, modi
 @Composable
 private fun MainScaffold(vm: AppViewModel, snap: AppSnapshot, session: Session, busy: Boolean, snackbar: SnackbarHostState) {
     val nav = rememberNavController()
+    val appNav = remember(nav) { AppNav(nav) }
     val entry by nav.currentBackStackEntryAsState()
     val current = entry?.destination?.route
     Scaffold(
@@ -210,13 +223,7 @@ private fun MainScaffold(vm: AppViewModel, snap: AppSnapshot, session: Session, 
                     val selected = current == t.route || (current?.startsWith(t.route + "/") == true)
                     NavigationBarItem(
                         selected = selected,
-                        onClick = {
-                            nav.navigate(t.route) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { appNav.top(t.route) },
                         icon = { Icon(t.icon, contentDescription = t.label) },
                         label = { Text(t.label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
                         alwaysShowLabel = true,
@@ -227,7 +234,7 @@ private fun MainScaffold(vm: AppViewModel, snap: AppSnapshot, session: Session, 
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            AppNavHost(AppNav(nav), vm, snap, session)
+            AppNavHost(appNav, vm, snap, session)
         }
     }
 }
@@ -303,7 +310,7 @@ fun AppNavHost(nav: AppNav, vm: AppViewModel, snap: AppSnapshot, session: Sessio
         }
 
         composable("settings") { PageFrame { SettingsScreen(vm, snap, session, onOpen = nav::settings) } }
-        composable("settings/rates") { PageFrame { FeeRatesScreen(vm, snap, session, onBack = back) } }
+        composable("settings/rates") { screens.FeeRates(vm, snap, session, nav) }
         composable("settings/school") { PageFrame { SchoolProfileScreen(vm, snap, session, onBack = back) } }
         composable("settings/users") { PageFrame { UsersScreen(vm, snap, session, onBack = back) } }
         composable("settings/data") { PageFrame { DataScreen(vm, snap, session, onBack = back) } }
