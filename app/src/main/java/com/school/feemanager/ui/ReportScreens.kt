@@ -50,9 +50,9 @@ import com.school.feemanager.util.Printer
 import java.time.LocalDate
 
 private fun ReportType.description(): String = when (this) {
-    ReportType.ENROLLMENT -> "All registered students with type, status and payment term"
-    ReportType.FEE_ASSESSMENT -> "Fee breakdown per student: training to net total"
-    ReportType.OUTSTANDING -> "Students who still owe money"
+    ReportType.ENROLLMENT -> "Every class enrollment: Enroll No., class, academic year, start, period, term"
+    ReportType.FEE_ASSESSMENT -> "Fee breakdown per class enrollment: training to net total"
+    ReportType.OUTSTANDING -> "Class enrollments that still owe money"
     ReportType.DAILY_COLLECTION -> "Every receipt in the selected period (default: today)"
     ReportType.MONTHLY_COLLECTION -> "Collections totalled by month"
     ReportType.CLASS_WISE -> "Receivable, collected and balance for each class"
@@ -120,7 +120,7 @@ fun ReportViewScreen(vm: AppViewModel, snap: AppSnapshot, type: ReportType, onBa
                         DateField("To", to, { to = it }, Modifier.weight(1f), allowClear = true)
                     }
                     Dropdown("Class", listOf<String?>(null) + snap.card.classNames, cls, { it ?: "All classes" }, { cls = it })
-                    SearchField(search, { search = it }, "Student name / ID")
+                    SearchField(search, { search = it }, "Student name / Enroll No. / ID")
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (type.usesStatus) PayStatus.entries.forEach { st ->
                             FilterChip(selected = status == st, onClick = { status = if (status == st) null else st }, label = { Text(st.label) })

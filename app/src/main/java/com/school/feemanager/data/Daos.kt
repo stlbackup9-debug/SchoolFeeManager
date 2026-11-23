@@ -46,8 +46,11 @@ interface StudentDao {
     @Query("SELECT * FROM students WHERE id = :id")
     suspend fun get(id: Long): StudentEntity?
 
-    @Query("SELECT * FROM students WHERE nameKey = :nameKey AND className = :className AND id != :excludeId LIMIT 1")
-    suspend fun findDuplicate(nameKey: String, className: String, excludeId: Long): StudentEntity?
+    @Query("SELECT * FROM students WHERE enrollNo = :enrollNo COLLATE NOCASE AND id != :excludeId LIMIT 1")
+    suspend fun byEnrollNo(enrollNo: String, excludeId: Long = -1): StudentEntity?
+
+    @Query("SELECT * FROM students WHERE code = :code COLLATE NOCASE LIMIT 1")
+    suspend fun byCode(code: String): StudentEntity?
 
     @Query("SELECT COUNT(*) FROM students WHERE code = :code")
     suspend fun countCode(code: String): Int
@@ -60,27 +63,39 @@ interface StudentDao {
 }
 
 @Dao
-interface StudentFeeDao {
-    @Query("SELECT * FROM student_fees")
-    fun observeAll(): Flow<List<StudentFeeEntity>>
+interface EnrollmentDao {
+    @Query("SELECT * FROM enrollments")
+    fun observeAll(): Flow<List<EnrollmentEntity>>
 
-    @Query("SELECT * FROM student_fees WHERE studentId = :id")
-    suspend fun get(id: Long): StudentFeeEntity?
+    @Query("SELECT * FROM enrollments")
+    suspend fun getAll(): List<EnrollmentEntity>
 
-    @Upsert
-    suspend fun upsert(f: StudentFeeEntity)
+    @Query("SELECT * FROM enrollments WHERE id = :id")
+    suspend fun get(id: Long): EnrollmentEntity?
+
+    @Query("SELECT * FROM enrollments WHERE studentId = :studentId")
+    suspend fun forStudent(studentId: Long): List<EnrollmentEntity>
+
+    @Query("SELECT * FROM enrollments WHERE studentId = :studentId AND className = :className COLLATE NOCASE AND academicYear = :year COLLATE NOCASE AND id != :excludeId LIMIT 1")
+    suspend fun findDuplicate(studentId: Long, className: String, year: String, excludeId: Long): EnrollmentEntity?
+
+    @Insert
+    suspend fun insert(e: EnrollmentEntity): Long
+
+    @Update
+    suspend fun update(e: EnrollmentEntity)
 }
 
 @Dao
 interface ScheduleDao {
-    @Query("SELECT * FROM payment_schedule ORDER BY studentId, seq")
+    @Query("SELECT * FROM payment_schedule ORDER BY enrollmentId, seq")
     fun observeAll(): Flow<List<PaymentScheduleEntity>>
 
-    @Query("SELECT * FROM payment_schedule WHERE studentId = :id ORDER BY seq")
-    suspend fun forStudent(id: Long): List<PaymentScheduleEntity>
+    @Query("SELECT * FROM payment_schedule WHERE enrollmentId = :id ORDER BY seq")
+    suspend fun forEnrollment(id: Long): List<PaymentScheduleEntity>
 
-    @Query("DELETE FROM payment_schedule WHERE studentId = :id")
-    suspend fun deleteForStudent(id: Long)
+    @Query("DELETE FROM payment_schedule WHERE enrollmentId = :id")
+    suspend fun deleteForEnrollment(id: Long)
 
     @Insert
     suspend fun insertAll(list: List<PaymentScheduleEntity>)
@@ -94,8 +109,11 @@ interface TransactionDao {
     @Query("SELECT * FROM payment_transactions WHERE studentId = :id AND voided = 0")
     suspend fun validForStudent(id: Long): List<PaymentTransactionEntity>
 
-    @Query("SELECT * FROM payment_transactions WHERE id = :id")
-    suspend fun get(id: Long): PaymentTransactionEntity?
+    @Query("SELECT * FROM payment_transactions WHERE enrollmentId = :id AND voided = 0")
+    suspend fun validForEnrollment(id: Long): List<PaymentTransactionEntity>
+
+    @Query("SELECT * FROM payment_transactions WHERE receiptId = :receiptId")
+    suspend fun forReceipt(receiptId: Long): List<PaymentTransactionEntity>
 
     @Insert
     suspend fun insert(t: PaymentTransactionEntity): Long
@@ -117,6 +135,9 @@ interface ReceiptDao {
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(r: ReceiptEntity): Long
+
+    @Update
+    suspend fun update(r: ReceiptEntity)
 
     @Query("UPDATE receipts SET printCount = printCount + 1 WHERE id = :id")
     suspend fun incrementPrint(id: Long)

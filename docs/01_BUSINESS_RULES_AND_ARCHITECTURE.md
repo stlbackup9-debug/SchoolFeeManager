@@ -85,26 +85,29 @@ Pure-Kotlin domain (no Android)           domain/*.kt, io/*.kt
 * **Printing**: receipts and reports are rendered as HTML and sent to Android's print framework (any printer, or *Save as PDF*). Report PDF export uses `android.graphics.pdf.PdfDocument`.
 * **Offline**: no network permission is requested.
 
-## 4. Database design (Room, version 1)
+## 4. Database design (Room, version 2)
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `school_settings` | id = 1 | school name/address/phone, instrument fee, laundry/month, months/year, entrance fee, academic-year start, receipt prefix, next receipt / student sequence |
-| `fee_rates` | id, **className (unique)** | sortOrder, training, 4 book fees, hostel fee |
-| `students` | id, **code (unique, STU-0001)** | name, nameKey (for duplicate check), class, type, New/Old, book type, term, discountBp, remarks, active, registeredOn |
-| `student_fees` | **studentId (PK, FK→students)** | approved assessment snapshot: each fee, gross, discountBp, discount, net, assessedAt |
-| `payment_schedule` | id, **(studentId, seq) unique**, FK→students | label (Inst-1 / M-1), dueDate, amount |
-| `payment_transactions` | id, FK→students, index on date | date, amount, scheduleSeq, paymentFor, remarks, receivedBy, createdAt, **voided / voidReason / voidedBy**, imported |
-| `receipts` | id, **receiptNo (unique)**, **transactionId (unique, FK)** | issuedAt, previousBalance, remainingBalance, receivedBy, printCount |
+| `school_settings` | id = 1 | school name/address/phone, instrument fee, laundry/month, default months, entrance fee, default academic-year start, receipt prefix, next receipt / student sequence |
+| `fee_rates` | id, **className (unique)** | sortOrder, training, 4 book fees, hostel fee, **startMonth, startDay, periodMonths** (the class's academic year) |
+| `students` | id, **code (unique, STU-0001)**, **enrollNo (unique when given)** | name, nameKey, remarks, active, registeredOn – identity only |
+| `enrollments` | id, FK→students, **(studentId, className, academicYear) unique** | academicYear, startDate, periodMonths, type, New/Old, book, term, discountBp, remarks, active + the approved fee snapshot (each fee, gross, discount, net, assessedAt) |
+| `payment_schedule` | id, **(enrollmentId, seq) unique**, FK→enrollments | label (Inst-1 / M-1), dueDate, amount |
+| `receipts` | id, **receiptNo (unique)**, index on date | date, payerName, previousBalance / remainingBalance (sum over the students on the receipt), receivedBy, remarks, printCount, **voided / voidReason / voidedBy**, imported |
+| `payment_transactions` | id, FK→receipts, FK→students, FK→enrollments | one line of a receipt: date, amount, scheduleSeq, paymentFor, remarks, receivedBy, createdAt, voided (follows the receipt), imported |
 | `users` | id, **username (unique)** | fullName, role (ADMIN/CASHIER), PBKDF2 hash + salt, active, mustChangePassword |
 | `audit_log` | id, index on at | username, action, details |
 
-Relationships: `students 1–1 student_fees`, `students 1–n payment_schedule`, `students 1–n payment_transactions 1–1 receipts`.
-All foreign keys are `RESTRICT` – a student with payments can never be deleted (students are deactivated instead).
+Relationships: `students 1–n enrollments 1–n payment_schedule`, `receipts 1–n payment_transactions n–1 enrollments`.
+A receipt with several lines is a **combined receipt**; its lines may belong to several classes and several students.
+All foreign keys are `RESTRICT` – nothing with payments can be deleted (students and enrollments are deactivated instead).
+
+**Migration 1 → 2** (`data/Migrations.kt`): each v1 student keeps its id and becomes a student + enrollment with the same id (start = the school's academic-year start, period = months/year, fee snapshot copied); schedules move to that enrollment; each v1 receipt becomes a receipt with one line; fee_rates get the school start date and period. No amount, date or receipt number changes. `MigrationTest` runs the SQL on SQLite and compares the result with Room's v2 schema.
 
 Accounting controls:
 * Payment + receipt are written in **one database transaction**; receipt numbers come from a sequence and are checked against the unique index.
-* Transactions are **never deleted**. A wrong entry is *voided* by an Admin with a reason; it stays in the register marked VOIDED and stops counting toward the balance.
+* Transactions are **never deleted**. A wrong receipt is *voided* by an Admin with a reason (all its lines); it stays in the register marked VOIDED and stops counting toward the balance.
 * Paid amount and balance are **computed** from transactions every time (never stored), so they cannot drift.
 * Overpayment requires an explicit second confirmation.
 * Every change is written to `audit_log`.
@@ -112,4 +115,13 @@ Accounting controls:
 * Backup = single-file copy of the database (journal mode TRUNCATE) taken inside an exclusive transaction. Restore validates the file and keeps a safety copy of the current database first.
 
 ## 5. Payment allocation
-Each payment is applied first to the installment/month it was recorded against; any excess spills into the earliest parts that still have a balance. Part status: **Fully Paid** (paid ≥ scheduled), **Overdue** (past due date and not fully paid), **Partially Paid**, **Unpaid**. Student status: Fully Paid when balance ≤ 0; Overdue if any part is overdue; otherwise Partially Paid / Unpaid.
+Allocation is per class enrollment. Each payment line is applied first to the installment/month it was recorded against; any excess spills into the earliest parts of the same enrollment that still have a balance. Part status: **Fully Paid** (paid ≥ scheduled), **Overdue** (past due date and not fully paid), **Partially Paid**, **Unpaid**. Student status: Fully Paid when balance ≤ 0; Overdue if any part is overdue; otherwise Partially Paid / Unpaid.
+
+## 6. Version 1.1 – multiple classes, combined receipts, Excel/CSV import (23-Nov-2026)
+
+* **Enroll No.**: typed by the school on the student (optional, unique). The automatic Student ID stays.
+* **Multiple classes**: a student can have any number of enrollments (several classes at once, or a new class each year). Each has its own academic year label, start date and period (1–24 months), defaulting from the class row in Fee Rates. Due dates: 3-Inst at start, +period/3, +2·period/3 (12 months → +0/+4/+8 as before); Monthly one per month of the period. Laundry = laundry/month × period (12 months → unchanged). With the default 12-month period every fee is identical to v1.0, so the Excel equivalence still holds.
+* **Payables** tab lists every unpaid line of every active enrollment; any selection (one or several students) is paid on one receipt.
+* **Combined receipt**: one receipt number with several lines; also, any set of existing receipts can be printed / saved as one combined document (summary + each receipt).
+* **Import**: Students, Class enrollments, Payments and Fee rates from .xlsx or .csv (comma/semicolon/tab, UTF-8, quoted fields), with templates. Header names are matched loosely. Students are matched by Enroll No., then Student ID, then name (+ class). Payment rows with the same receipt number form one receipt. Every import is first run as a **dry run** inside a transaction that is rolled back, so the preview shows exactly what will be added; the real import is one transaction.
+* Dashboard: "Total Students" counts students with an active enrollment; class / Day / Hostel / New / Old figures count enrollments.

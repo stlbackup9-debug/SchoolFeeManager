@@ -1,6 +1,7 @@
 package com.school.feemanager
 
 import com.school.feemanager.domain.BookType
+import com.school.feemanager.domain.EnrollmentRecord
 import com.school.feemanager.domain.FeeCalculator
 import com.school.feemanager.domain.FeeRateCard
 import com.school.feemanager.domain.Ledger
@@ -18,6 +19,7 @@ import com.school.feemanager.domain.StudentRecord
 import com.school.feemanager.domain.StudentStatus
 import com.school.feemanager.domain.StudentType
 import com.school.feemanager.io.HtmlDocs
+import com.school.feemanager.io.ReceiptLine
 import com.school.feemanager.io.ReceiptView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,11 +32,21 @@ class BusinessRulesTest {
     private val card = FeeRateCard.workbookDefaults()
     private val start = LocalDate.of(2026, 6, 1)
 
+    /** A student with one enrollment; enrollment id == student id. */
     private fun student(id: Long, cls: String, type: StudentType, st: StudentStatus, book: BookType, bp: Int = 0, term: PaymentTerm = PaymentTerm.THREE_INST) =
-        StudentRecord(id, "STU-%04d".format(id), "Student $id", cls, type, st, book, term, bp, "", true, start)
+        EnrollmentRecord(id, id, cls, "2026-2027", start, 12, type, st, book, term, bp, "", true, start)
 
-    private fun pay(id: Long, sid: Long, date: LocalDate, amt: Long, seq: Int? = null) =
-        PaymentRecord(id, sid, date, amt, seq, "", "RCP-$id", "", "tester")
+    private fun person(id: Long) = StudentRecord(id, "STU-%04d".format(id), "EN-$id", "Student $id", "", true, start)
+
+    private fun pay(id: Long, sid: Long, date: LocalDate, amt: Long, seq: Int? = null, enrollment: Long = sid, receipt: Long = id) =
+        PaymentRecord(id, sid, date, amt, seq, "", "RCP-$receipt", "", "tester", enrollmentId = enrollment, receiptId = receipt)
+
+    private fun input(enrollments: List<EnrollmentRecord>, pays: List<PaymentRecord>, today: LocalDate) = LedgerInput(
+        enrollments.map { it.studentId }.distinct().map { person(it) }, enrollments,
+        enrollments.associate { it.id to FeeCalculator.assess(card, it) },
+        enrollments.associate { it.id to ScheduleCalculator.generate(it.term, FeeCalculator.assess(card, it).netTotal, it.startDate, it.periodMonths) },
+        pays, card.classNames, today,
+    )
 
     @Test fun scenario1_newDayStudent() {
         val f = FeeCalculator.assess(card, "G-3", StudentType.DAY, StudentStatus.NEW, BookType.MYANMAR, 0)
@@ -126,14 +138,8 @@ class BusinessRulesTest {
         }
     }
 
-    private fun ledgerOf(s: StudentRecord, pays: List<PaymentRecord>, today: LocalDate) =
-        Ledger.build(
-            LedgerInput(
-                listOf(s), mapOf(s.id to FeeCalculator.assess(card, s)),
-                mapOf(s.id to ScheduleCalculator.generate(s.term, FeeCalculator.assess(card, s).netTotal, start)),
-                pays, card.classNames, today,
-            ),
-        ).single()
+    private fun ledgerOf(s: EnrollmentRecord, pays: List<PaymentRecord>, today: LocalDate) =
+        Ledger.build(input(listOf(s), pays, today)).single().enrollments.single()
 
     @Test fun scenario9_partialPayments() {
         val s = student(1, "G-3", StudentType.DAY, StudentStatus.NEW, BookType.MYANMAR) // net 550,000
@@ -173,9 +179,10 @@ class BusinessRulesTest {
     }
 
     @Test fun scenario12_receipt() {
-        val html = HtmlDocs.receipt(ReceiptView("Shwe Pyi School", "Yangon", "09-123", "RCP-2026-000001", start, "STU-0001", "Aung <Aung>", "G-3",
-            100000, "Installment 1", 550000, 450000, "cashier1", "", reprint = true, voided = false))
-        listOf("Shwe Pyi School", "RCP-2026-000001", "01-Jun-2026", "Aung &lt;Aung&gt;", "G-3", "100,000 MMK", "Installment 1", "550,000 MMK", "450,000 MMK", "cashier1", "Signature", "DUPLICATE COPY")
+        val html = HtmlDocs.receipt(ReceiptView("Shwe Pyi School", "Yangon", "09-123", "RCP-2026-000001", start, "Aung <Aung>",
+            listOf(ReceiptLine("Aung <Aung>", "EN-1 · STU-0001", "G-3 (2026-2027)", "Installment 1", 100000)),
+            550000, 450000, "cashier1", "", reprint = true, voided = false))
+        listOf("Shwe Pyi School", "RCP-2026-000001", "01-Jun-2026", "Aung &lt;Aung&gt;", "G-3", "100,000 MMK", "Installment 1", "550,000 MMK", "450,000 MMK", "cashier1", "Signature", "DUPLICATE COPY", "EN-1")
             .forEach { assertTrue("receipt missing $it", html.contains(it)) }
     }
 
@@ -183,17 +190,13 @@ class BusinessRulesTest {
         val s1 = student(1, "G-3", StudentType.DAY, StudentStatus.NEW, BookType.MYANMAR)
         val s2 = student(2, "KG", StudentType.HOSTEL, StudentStatus.NEW, BookType.MYANMAR, term = PaymentTerm.MONTHLY)
         val pays = listOf(pay(1, 1, start, 100000), pay(2, 2, start, 200000), pay(3, 2, start.plusDays(1), 70000), pay(4, 1, start, 5000).copy(voided = true))
-        val input = LedgerInput(
-            listOf(s1, s2), listOf(s1, s2).associate { it.id to FeeCalculator.assess(card, it) },
-            listOf(s1, s2).associate { it.id to ScheduleCalculator.generate(it.term, FeeCalculator.assess(card, it).netTotal, start) },
-            pays, card.classNames, start,
-        )
-        val ledgers = Ledger.build(input)
+        val ledgers = Ledger.build(input(listOf(s1, s2), pays, start))
         val daily = Reports.build(ReportType.DAILY_COLLECTION, ledgers, pays, card.classNames, ReportFilter(from = start, to = start), start)
         assertEquals(2, daily.rows.size)
-        assertEquals(300000L, daily.totals!![7])
+        assertEquals(300000L, daily.totals!!.last())
         val monthly = Reports.build(ReportType.MONTHLY_COLLECTION, ledgers, pays, card.classNames, ReportFilter(), start)
         assertEquals(370000L, monthly.rows.single()[3])
+        assertEquals(3L, monthly.rows.single()[1])
         val dash = Ledger.dashboard(ledgers, pays, card.classNames, start)
         assertEquals(300000L, dash.collectedToday)
         assertEquals(370000L, dash.totalCollected)

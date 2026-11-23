@@ -11,7 +11,7 @@ Kotlin · Jetpack Compose (Material 3) · MVVM · Room (SQLite) · min Android 8
 
 ## Building the APK
 
-> **Status:** the app compiles cleanly (`assembleDebug` / `assembleRelease`, no compiler warnings, no lint errors) and all 18 unit tests pass; 550/550 values match the workbook. To build it yourself in Android Studio:
+> **Status (v1.1):** the app compiles cleanly (`assembleDebug` / `assembleRelease`, no compiler warnings, no lint errors) and all 25 unit tests pass, including the v1 → v2 database migration; 550/550 values match the workbook. New in 1.1: Enroll No., several classes per student (each with its own academic year, start date and period), a Payables tab with multi-select payment, combined receipts, and Excel/CSV import for students, class enrollments, payments and fee rates. To build it yourself in Android Studio:
 
 1. Install **Android Studio** (Ladybug 2024.2 or newer) – https://developer.android.com/studio
 2. *File → Open* and choose this `SchoolFeeManager` folder. Let Gradle sync (needs internet the first time, ~5–10 min).
@@ -21,7 +21,7 @@ Kotlin · Jetpack Compose (Material 3) · MVVM · Room (SQLite) · min Android 8
 
 Command line alternative (Android SDK installed, `ANDROID_HOME` set):
 ```
-./gradlew test            # 18 business-rule tests
+./gradlew test            # 25 unit tests (business rules, import/export, multi-class, migration)
 ./gradlew assembleRelease # app/build/outputs/apk/release/app-release.apk
 ```
 The release build is signed with the debug key so it installs directly. Before publishing on Google Play, create your own signing key (*Build → Generate Signed App Bundle / APK*).
@@ -35,8 +35,8 @@ If the build reports an error, copy the first error message and send it back –
 ```
 app/src/main/java/com/school/feemanager/
   domain/   pure Kotlin business rules (FeeCalculator, ScheduleCalculator, Ledger, Reports, Money, PasswordHasher)
-  io/       .xlsx reader/writer, workbook import/export, receipt & report HTML
-  data/     Room entities, DAOs, database, FeeRepository (transactions, import, backup/restore)
+  io/       .xlsx reader/writer, workbook import/export, Excel/CSV module import + templates, receipt & report HTML
+  data/     Room entities, DAOs, database + migration, FeeRepository (transactions, import, backup/restore)
   ui/       Compose screens + AppViewModel
   util/     PDF export, printing, app restart
 app/src/test/  JUnit tests + the original workbook as a test resource

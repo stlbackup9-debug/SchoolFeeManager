@@ -7,6 +7,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,8 +25,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -54,19 +57,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.school.feemanager.data.AppSnapshot
+import com.school.feemanager.data.EnrollmentForm
 import com.school.feemanager.data.StudentForm
 import com.school.feemanager.domain.BookType
+import com.school.feemanager.domain.EnrollmentLedger
+import com.school.feemanager.domain.EnrollmentRecord
 import com.school.feemanager.domain.FeeAssessment
 import com.school.feemanager.domain.FeeCalculator
 import com.school.feemanager.domain.Money
 import com.school.feemanager.domain.PayStatus
 import com.school.feemanager.domain.PaymentTerm
 import com.school.feemanager.domain.Reports
+import com.school.feemanager.domain.ScheduleCalculator
 import com.school.feemanager.domain.StudentLedger
 import com.school.feemanager.domain.StudentStatus
 import com.school.feemanager.domain.StudentType
+import com.school.feemanager.domain.academicYearLabel
 import com.school.feemanager.ui.theme.Green
 import com.school.feemanager.ui.theme.Red
+import java.time.LocalDate
 
 // ============================================================== list
 @Composable
@@ -78,17 +87,17 @@ fun StudentsScreen(snap: AppSnapshot, session: Session, onOpen: (Long) -> Unit, 
     var showInactive by rememberSaveable { mutableStateOf(false) }
     val list = snap.ledgers
         .filter { showInactive || it.student.active }
-        .filter { cls == null || it.student.className == cls }
-        .filter { type == null || it.student.type == type }
+        .filter { l -> cls == null || l.enrollments.any { it.enrollment.className == cls && (showInactive || it.enrollment.active) } }
+        .filter { l -> type == null || l.activeEnrollments.any { it.enrollment.type == type } }
         .filter { status == null || Reports.statusMatches(it, status!!) }
         .filter { Reports.matches(it.student, query) }
-        .sortedWith(compareBy<StudentLedger> { snap.card.classNames.indexOf(it.student.className) }.thenBy { it.student.name.lowercase() })
+        .sortedWith(compareBy<StudentLedger> { l -> l.activeEnrollments.minOfOrNull { e -> snap.card.classNames.indexOf(e.enrollment.className).let { if (it < 0) 999 else it } } ?: 999 }.thenBy { it.student.name.lowercase() })
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             AppTopBar("Student Register (${list.size})")
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                SearchField(query, { query = it }, "Search name or Student ID")
+                SearchField(query, { query = it }, "Search name, Enroll No. or Student ID")
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Dropdown("Class", listOf<String?>(null) + snap.card.classNames, cls, { it ?: "All classes" }, { cls = it }, Modifier.width(150.dp))
                     FilterChip(selected = type == StudentType.DAY, onClick = { type = if (type == StudentType.DAY) null else StudentType.DAY }, label = { Text("Day") })
@@ -99,7 +108,7 @@ fun StudentsScreen(snap: AppSnapshot, session: Session, onOpen: (Long) -> Unit, 
                     FilterChip(selected = showInactive, onClick = { showInactive = !showInactive }, label = { Text("Show inactive") })
                 }
             }
-            if (list.isEmpty()) EmptyState(if (snap.ledgers.isEmpty()) "No students yet.\nTap “Register” to add the first student, or import your Excel workbook from Settings → Data." else "No students match the filters")
+            if (list.isEmpty()) EmptyState(if (snap.ledgers.isEmpty()) "No students yet.\nTap “Register” to add the first student, or import Excel / CSV from Settings → Data." else "No students match the filters")
             LazyColumn(contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 88.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(list, key = { it.student.id }) { l -> StudentRow(l) { onOpen(l.student.id) } }
             }
@@ -113,6 +122,7 @@ fun StudentsScreen(snap: AppSnapshot, session: Session, onOpen: (Long) -> Unit, 
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StudentRow(l: StudentLedger, onClick: () -> Unit) {
     val s = l.student
@@ -121,8 +131,11 @@ private fun StudentRow(l: StudentLedger, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(s.name, style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(2.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SmallTag(s.code); SmallTag(s.className); SmallTag(s.type.label); SmallTag(s.term.label)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (s.enrollNo.isNotBlank()) SmallTag("No. ${s.enrollNo}")
+                    SmallTag(s.code)
+                    l.activeEnrollments.forEach { SmallTag("${it.enrollment.className} · ${it.enrollment.type.label}") }
+                    if (l.activeEnrollments.isEmpty()) SmallTag("No class", Red)
                     if (!s.active) SmallTag("Inactive", Red)
                 }
             }
@@ -140,16 +153,14 @@ private fun StudentRow(l: StudentLedger, onClick: () -> Unit) {
 @Composable
 fun StudentDetailScreen(
     vm: AppViewModel, snap: AppSnapshot, session: Session, id: Long,
-    onBack: () -> Unit, onEdit: () -> Unit, onCollect: (Int) -> Unit, onReceipt: (Long) -> Unit,
+    onBack: () -> Unit, onEdit: () -> Unit, onAddClass: () -> Unit, onEditClass: (Long) -> Unit,
+    onPay: (List<String>) -> Unit, onReceipt: (Long) -> Unit,
 ) {
     val l = snap.ledger(id)
     if (l == null) { Column { AppTopBar("Student", onBack); EmptyState("Student not found") }; return }
     val s = l.student
     var menu by remember { mutableStateOf(false) }
     var confirmActive by remember { mutableStateOf(false) }
-    var confirmRecalc by remember { mutableStateOf(false) }
-    var promoteOpen by remember { mutableStateOf(false) }
-    val currentFee = FeeCalculator.assess(snap.card, s)
 
     Column(Modifier.fillMaxSize()) {
         AppTopBar(s.name, onBack) {
@@ -158,8 +169,7 @@ fun StudentDetailScreen(
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Promote / change class") }, onClick = { menu = false; promoteOpen = true })
-                        DropdownMenuItem(text = { Text("Recalculate fees with current rates") }, onClick = { menu = false; confirmRecalc = true })
+                        DropdownMenuItem(text = { Text("Add class / next year") }, onClick = { menu = false; onAddClass() })
                         DropdownMenuItem(text = { Text(if (s.active) "Deactivate student" else "Reactivate student") }, onClick = { menu = false; confirmActive = true })
                     }
                 }
@@ -167,49 +177,45 @@ fun StudentDetailScreen(
         }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SectionCard("Profile") {
-                KeyValue("Student ID", s.code, bold = true)
-                KeyValue("Class", s.className)
-                KeyValue("Student type", s.type.label)
-                KeyValue("New / Old", s.status.label)
-                KeyValue("Book type", s.bookType.label)
-                KeyValue("Payment term", s.term.label)
+                KeyValue("Enroll No.", s.enrollNo.ifBlank { "–" }, bold = true)
+                KeyValue("Student ID", s.code)
                 KeyValue("Registered", s.registeredOn.fmt())
                 KeyValue("Status", if (s.active) "Active" else "Inactive", valueColor = if (s.active) Green else Red)
                 if (s.remarks.isNotBlank()) KeyValue("Remarks", s.remarks)
             }
-            SectionCard("Fee assessment") {
-                FeeBreakdown(l.fee)
-                if (currentFee != l.fee) {
-                    Spacer(Modifier.height(6.dp))
-                    Text("Current fee rates would give ${Money.mmk(currentFee.netTotal)}. The approved assessment above is kept until an Admin recalculates.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                }
-            }
-            SectionCard("Balance") {
+            SectionCard("Balance – all classes") {
                 KeyValue("Net total receivable", Money.mmk(l.net), bold = true)
                 KeyValue("Paid amount", Money.mmk(l.paid), valueColor = Green)
                 KeyValue("Balance due", Money.mmk(l.balance), bold = true, valueColor = if (l.balance > 0) Red else Green)
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("Status  ", style = MaterialTheme.typography.bodyMedium); StatusChip(l.status) }
-                if (s.active && l.balance > 0) {
+                if (s.active && l.activeEnrollments.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = { onCollect(-1) }, modifier = Modifier.fillMaxWidth()) { Text("Collect payment") }
+                    val n = l.payables.size
+                    Button(onClick = { onPay(emptyList()) }, modifier = Modifier.fillMaxWidth()) { Text(if (n > 0) "Collect payment ($n payable)" else "Collect payment") }
                 }
             }
-            SectionCard("Payment schedule (${s.term.label})") {
-                ScheduleTable(l, onCollect = if (s.active) onCollect else null)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Classes (${l.enrollments.size})", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                if (session.isAdmin && s.active) TextButton(onClick = onAddClass) { Icon(Icons.Default.Add, contentDescription = null); Text("Add class") }
+            }
+            if (l.enrollments.isEmpty()) Text("Not enrolled in any class yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            l.enrollments.forEach { e ->
+                EnrollmentCard(vm, snap, session, e, studentActive = s.active, onEdit = { onEditClass(e.enrollment.id) }, onPayLine = { seq -> onPay(listOf("${e.enrollment.id}:$seq")) })
             }
             SectionCard("Payment history") {
-                val all = snap.payments.filter { it.studentId == s.id }.sortedWith(compareByDescending<com.school.feemanager.domain.PaymentRecord> { it.date }.thenByDescending { it.id })
-                if (all.isEmpty()) Text("No payments yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                all.forEachIndexed { i, p ->
+                val receipts = snap.receipts.filter { r -> r.items.any { it.studentId == s.id } }.sortedWith(compareByDescending<com.school.feemanager.domain.ReceiptRecord> { it.date }.thenByDescending { it.id })
+                if (receipts.isEmpty()) Text("No payments yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                receipts.forEachIndexed { i, r ->
                     if (i > 0) HorizontalDivider()
-                    Row(Modifier.fillMaxWidth().clickable { snap.receiptsByTx[p.id]?.let { onReceipt(it.id) } }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val mine = r.items.filter { it.studentId == s.id }
+                    Row(Modifier.fillMaxWidth().clickable { onReceipt(r.id) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("${p.receiptNo}  ·  ${p.date.fmt()}", style = MaterialTheme.typography.bodyMedium)
-                            Text(listOf(p.paymentFor, "by ${p.receivedBy}", if (p.voided) "VOIDED" else "").filter { it.isNotBlank() }.joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall, color = if (p.voided) Red else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${r.receiptNo}  ·  ${r.date.fmt()}${if (r.items.size > 1) "  ·  combined" else ""}", style = MaterialTheme.typography.bodyMedium)
+                            Text(listOf(mine.joinToString(", ") { p -> (snap.enrollment(p.enrollmentId)?.second?.enrollment?.className?.let { "$it " } ?: "") + p.paymentFor }, "by ${r.receivedBy}", if (r.voided) "VOIDED" else "")
+                                .filter { it.isNotBlank() }.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall, color = if (r.voided) Red else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(Money.format(p.amount), fontWeight = FontWeight.SemiBold, color = if (p.voided) Red else Green)
+                        Text(Money.format(mine.sumOf { it.amount }), fontWeight = FontWeight.SemiBold, color = if (r.voided) Red else Green)
                     }
                 }
             }
@@ -222,13 +228,63 @@ fun StudentDetailScreen(
         confirmLabel = if (s.active) "Deactivate" else "Reactivate", destructive = s.active,
         onConfirm = { vm.setStudentActive(s.id, !s.active) }, onDismiss = { confirmActive = false },
     )
+}
+
+@Composable
+private fun EnrollmentCard(vm: AppViewModel, snap: AppSnapshot, session: Session, l: EnrollmentLedger, studentActive: Boolean, onEdit: () -> Unit, onPayLine: (Int) -> Unit) {
+    val e = l.enrollment
+    var open by rememberSaveable(e.id) { mutableStateOf(e.active && l.balance > 0) }
+    var menu by remember { mutableStateOf(false) }
+    var confirmRecalc by remember { mutableStateOf(false) }
+    var confirmActive by remember { mutableStateOf(false) }
+    val currentFee = FeeCalculator.assess(snap.card, e)
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(12.dp)) {
+            Row(Modifier.fillMaxWidth().clickable { open = !open }, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(e.title, style = MaterialTheme.typography.titleSmall, color = if (e.active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("From ${e.startDate.fmt()} · ${e.periodMonths} months · ${e.type.label} · ${e.term.label}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Net ${Money.format(l.net)} · Paid ${Money.format(l.paid)} · Due ${Money.format(l.balance)}", style = MaterialTheme.typography.bodySmall)
+                    if (!e.active) Text("Inactive", style = MaterialTheme.typography.labelSmall, color = Red)
+                }
+                StatusChip(l.status)
+                if (session.isAdmin) Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Class actions") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Edit class details") }, onClick = { menu = false; onEdit() })
+                        DropdownMenuItem(text = { Text("Recalculate with current rates") }, onClick = { menu = false; confirmRecalc = true })
+                        DropdownMenuItem(text = { Text(if (e.active) "Deactivate this class" else "Reactivate this class") }, onClick = { menu = false; confirmActive = true })
+                    }
+                }
+                Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+            }
+            if (open) {
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                KeyValue("Academic year", e.academicYear)
+                KeyValue("New / Old · Book", "${e.status.label} · ${e.bookType.label}")
+                if (e.remarks.isNotBlank()) KeyValue("Remarks", e.remarks)
+                Spacer(Modifier.height(4.dp))
+                FeeBreakdown(l.fee)
+                if (currentFee != l.fee) Text("Current fee rates would give ${Money.mmk(currentFee.netTotal)}. The approved assessment above is kept until an Admin recalculates.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                Spacer(Modifier.height(6.dp))
+                Text("Payment schedule", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                ScheduleTable(l, onCollect = if (studentActive && e.active) onPayLine else null)
+            }
+        }
+    }
     if (confirmRecalc) ConfirmDialog(
-        title = "Recalculate fees?",
+        title = "Recalculate ${e.title}?",
         text = "Net total changes from ${Money.mmk(l.net)} to ${Money.mmk(currentFee.netTotal)} using the current fee rates. The payment schedule is regenerated; recorded payments are kept.",
         confirmLabel = "Recalculate",
-        onConfirm = { vm.recalculate(listOf(s.id)) }, onDismiss = { confirmRecalc = false },
+        onConfirm = { vm.recalculate(listOf(e.id)) }, onDismiss = { confirmRecalc = false },
     )
-    if (promoteOpen) PromoteDialog(snap, l, onDismiss = { promoteOpen = false }) { cls, markOld, recalc -> vm.promote(s.id, cls, markOld, recalc) }
+    if (confirmActive) ConfirmDialog(
+        title = if (e.active) "Deactivate ${e.title}?" else "Reactivate ${e.title}?",
+        text = if (e.active) "Use this when the student left the class. Its payables are hidden and it cannot be paid; recorded payments and the balance are kept in reports." else "The class becomes payable again.",
+        confirmLabel = if (e.active) "Deactivate" else "Reactivate", destructive = e.active,
+        onConfirm = { vm.setEnrollmentActive(e.id, !e.active) }, onDismiss = { confirmActive = false },
+    )
 }
 
 @Composable
@@ -237,7 +293,7 @@ fun FeeBreakdown(f: FeeAssessment) {
     KeyValue("Instrument fee", Money.format(f.instrumentFee))
     KeyValue("Book fee", Money.format(f.bookFee))
     KeyValue("Hostel fee", Money.format(f.hostelFee))
-    KeyValue("Laundry fee (annual)", Money.format(f.laundryFee))
+    KeyValue("Laundry fee", Money.format(f.laundryFee))
     KeyValue("Entrance fee", Money.format(f.entranceFee))
     HorizontalDivider(Modifier.padding(vertical = 4.dp))
     KeyValue("Gross total", Money.mmk(f.grossTotal), bold = true)
@@ -246,7 +302,7 @@ fun FeeBreakdown(f: FeeAssessment) {
 }
 
 @Composable
-fun ScheduleTable(l: StudentLedger, onCollect: ((Int) -> Unit)?) {
+fun ScheduleTable(l: EnrollmentLedger, onCollect: ((Int) -> Unit)?) {
     l.lines.forEachIndexed { i, ls ->
         if (i > 0) HorizontalDivider()
         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -260,90 +316,163 @@ fun ScheduleTable(l: StudentLedger, onCollect: ((Int) -> Unit)?) {
     }
 }
 
-@Composable
-private fun PromoteDialog(snap: AppSnapshot, l: StudentLedger, onDismiss: () -> Unit, onConfirm: (String, Boolean, Boolean) -> Unit) {
-    val classes = snap.card.classNames
-    val idx = classes.indexOf(l.student.className)
-    var target by remember { mutableStateOf(classes.getOrNull(idx + 1) ?: l.student.className) }
-    var markOld by remember { mutableStateOf(true) }
-    var recalc by remember { mutableStateOf(true) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Promote ${l.student.name}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Current class: ${l.student.className}")
-                Dropdown("New class", classes, target, { it }, { target = it })
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(markOld, { markOld = it }); Text("Mark as Old student (no entrance fee)") }
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(recalc, { recalc = it }); Text("Recalculate fees for the new class") }
-                Text("Payments already recorded stay on the student's account.", style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { TextButton(onClick = { onConfirm(target, markOld, recalc); onDismiss() }, enabled = target != l.student.className) { Text("Promote") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+// ============================================================== enrollment fields
+/** Editable state of the class fields, shared by "Register student" and "Add / edit class". */
+private class EnrollmentState(snap: AppSnapshot, e: EnrollmentRecord?, suggestedClass: String?, suggestedStatus: StudentStatus) {
+    private val first = snap.card.classes.firstOrNull { it.className == (e?.className ?: suggestedClass) } ?: snap.card.classes.firstOrNull()
+    var cls by mutableStateOf(e?.className ?: first?.className ?: "")
+    var start by mutableStateOf(e?.startDate ?: first?.defaultStart(snap.today) ?: snap.yearStart)
+    var period by mutableStateOf((e?.periodMonths ?: first?.periodMonths ?: 12).toString())
+    var year by mutableStateOf(e?.academicYear ?: academicYearLabel(start, first?.periodMonths ?: 12))
+    var yearEdited by mutableStateOf(e != null)
+    var type by mutableStateOf(e?.type ?: StudentType.DAY)
+    var status by mutableStateOf(e?.status ?: suggestedStatus)
+    var book by mutableStateOf(e?.bookType ?: BookType.MYANMAR)
+    var term by mutableStateOf(e?.term ?: PaymentTerm.THREE_INST)
+    var discount by mutableStateOf(e?.discountBp?.let { Money.bpToPlain(it) } ?: "0")
+    var remarks by mutableStateOf(e?.remarks ?: "")
+
+    val bp: Int? get() = Money.parsePercentToBp(discount)
+    val periodInt: Int? get() = period.toIntOrNull()?.takeIf { it in 1..24 }
+    val valid: Boolean get() = bp != null && periodInt != null && year.isNotBlank() && cls.isNotBlank()
+
+    fun autoYear() { if (!yearEdited) periodInt?.let { year = academicYearLabel(start, it) } }
+
+    fun form() = EnrollmentForm(cls, year.trim(), start, periodInt ?: 12, type, status, book, bp ?: 0, term, remarks)
 }
 
-// ============================================================== add / edit
+@Composable
+private fun EnrollmentFields(snap: AppSnapshot, st: EnrollmentState, isNew: Boolean) {
+    Dropdown("Class", snap.card.classNames, st.cls, { it }, { c ->
+        st.cls = c
+        if (isNew) snap.card.rateFor(c)?.let { r -> st.start = r.defaultStart(snap.today); st.period = r.periodMonths.toString() }
+        st.autoYear()
+    })
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        DateField("Start date", st.start, { if (it != null) { st.start = it; st.autoYear() } }, Modifier.weight(1.3f))
+        OutlinedTextField(st.period, { st.period = it.filter { c -> c.isDigit() }.take(2); st.autoYear() }, label = { Text("Months") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), isError = st.periodInt == null, modifier = Modifier.weight(0.8f))
+    }
+    OutlinedTextField(st.year, { st.year = it.take(20); st.yearEdited = true }, label = { Text("Academic year") }, singleLine = true, isError = st.year.isBlank(),
+        supportingText = { Text("Ends ${st.periodInt?.let { st.start.plusMonths(it.toLong()).minusDays(1).fmt() } ?: "–"}") }, modifier = Modifier.fillMaxWidth())
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Dropdown("Student type", StudentType.entries, st.type, { it.label }, { st.type = it }, Modifier.weight(1f))
+        Dropdown("New / Old", StudentStatus.entries, st.status, { it.label }, { st.status = it }, Modifier.weight(1f))
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Dropdown("Book type", BookType.entries, st.book, { it.label }, { st.book = it }, Modifier.weight(1f))
+        Dropdown("Payment term", PaymentTerm.entries, st.term, { it.label }, { st.term = it }, Modifier.weight(1f))
+    }
+    OutlinedTextField(st.discount, { st.discount = it.filter { c -> c.isDigit() || c == '.' }.take(6) }, label = { Text("Discount %") }, singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = st.bp == null,
+        supportingText = { if (st.bp == null) Text("Enter 0 – 100") }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(st.remarks, { st.remarks = it }, label = { Text("Class remarks") }, modifier = Modifier.fillMaxWidth())
+}
+
+@Composable
+private fun FeePreview(snap: AppSnapshot, st: EnrollmentState, fee: FeeAssessment, title: String, alreadyPaid: Long?) {
+    SectionCard(title) {
+        FeeBreakdown(fee)
+        val term = st.term
+        val period = st.periodInt ?: 12
+        val lines = ScheduleCalculator.generate(term, fee.netTotal, st.start, period)
+        Spacer(Modifier.height(4.dp))
+        Text("${term.label}: ${lines.size} payments of ${lines.map { it.amount }.distinct().joinToString(" / ") { Money.format(it) }}, first due ${lines.firstOrNull()?.dueDate?.fmt() ?: "–"}, last due ${lines.lastOrNull()?.dueDate?.fmt() ?: "–"}",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (alreadyPaid != null) KeyValue("Already paid", Money.mmk(alreadyPaid))
+    }
+}
+
+// ============================================================== add / edit student
 @Composable
 fun StudentEditScreen(vm: AppViewModel, snap: AppSnapshot, id: Long?, onBack: () -> Unit, onSaved: (Long) -> Unit) {
     val existing = id?.let { snap.ledger(it) }
     val s0 = existing?.student
+    var enrollNo by rememberSaveable { mutableStateOf(s0?.enrollNo ?: "") }
     var name by rememberSaveable { mutableStateOf(s0?.name ?: "") }
-    var cls by rememberSaveable { mutableStateOf(s0?.className ?: snap.card.classNames.firstOrNull() ?: "") }
-    var type by rememberSaveable { mutableStateOf(s0?.type ?: StudentType.DAY) }
-    var status by rememberSaveable { mutableStateOf(s0?.status ?: StudentStatus.NEW) }
-    var book by rememberSaveable { mutableStateOf(s0?.bookType ?: BookType.MYANMAR) }
-    var term by rememberSaveable { mutableStateOf(s0?.term ?: PaymentTerm.THREE_INST) }
-    var discount by rememberSaveable { mutableStateOf(s0?.discountBp?.let { Money.bpToPlain(it) } ?: "0") }
     var remarks by rememberSaveable { mutableStateOf(s0?.remarks ?: "") }
-    var confirm by remember { mutableStateOf(false) }
+    var withClass by rememberSaveable { mutableStateOf(true) }
+    val st = remember { EnrollmentState(snap, null, null, StudentStatus.NEW) }
 
-    val bp = Money.parsePercentToBp(discount)
-    val form = StudentForm(name, cls, type, status, book, bp ?: 0, term, remarks)
-    val preview = FeeCalculator.assess(snap.card, cls, type, status, book, bp ?: 0)
-    val feeFieldsChanged = s0 != null && (s0.className != cls || s0.type != type || s0.status != status || s0.bookType != book || s0.discountBp != (bp ?: 0))
-    val shown = if (existing != null && !feeFieldsChanged) existing.fee else preview
-    val dup = snap.ledgers.firstOrNull { it.student.id != id && it.student.className == cls && it.student.name.trim().equals(name.trim().replace(Regex("\\s+"), " "), true) }
-    val valid = name.isNotBlank() && bp != null && dup == null
+    val cleanName = name.trim().replace(Regex("\\s+"), " ")
+    val enDup = enrollNo.trim().takeIf { it.isNotEmpty() }?.let { en -> snap.ledgers.firstOrNull { it.student.id != id && it.student.enrollNo.equals(en, true) } }
+    val nameDup = if (id == null && withClass) snap.ledgers.firstOrNull { l ->
+        l.student.name.equals(cleanName, true) && l.enrollments.any { it.enrollment.className == st.cls && it.enrollment.academicYear.equals(st.year.trim(), true) }
+    } else null
+    val sameName = if (id == null) snap.ledgers.firstOrNull { it.student.name.equals(cleanName, true) } else null
+    val valid = cleanName.isNotBlank() && enDup == null && nameDup == null && (!withClass || id != null || st.valid)
 
     Column(Modifier.fillMaxSize()) {
         AppTopBar(if (id == null) "Register Student" else "Edit ${s0?.code ?: ""}", onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (id == null) Text("Student ID will be generated automatically.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(enrollNo, { enrollNo = it.take(30) }, label = { Text("Enroll No.") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                isError = enDup != null,
+                supportingText = { Text(if (enDup != null) "Already used by ${enDup.student.name} (${enDup.student.code})" else "Your school's enroll number (optional, must be unique). Student ID ${s0?.code ?: "is generated automatically"}.") })
             OutlinedTextField(name, { name = it }, label = { Text("Student name *") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                isError = dup != null, supportingText = { if (dup != null) Text("Already registered: ${dup.student.code} in ${dup.student.className}") })
-            Dropdown("Class", snap.card.classNames, cls, { it }, { cls = it })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Dropdown("Student type", StudentType.entries, type, { it.label }, { type = it }, Modifier.weight(1f))
-                Dropdown("New / Old", StudentStatus.entries, status, { it.label }, { status = it }, Modifier.weight(1f))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Dropdown("Book type", BookType.entries, book, { it.label }, { book = it }, Modifier.weight(1f))
-                Dropdown("Payment term", PaymentTerm.entries, term, { it.label }, { term = it }, Modifier.weight(1f))
-            }
-            OutlinedTextField(discount, { discount = it.filter { c -> c.isDigit() || c == '.' }.take(6) }, label = { Text("Discount %") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = bp == null,
-                supportingText = { if (bp == null) Text("Enter 0 – 100") }, modifier = Modifier.fillMaxWidth())
+                isError = nameDup != null,
+                supportingText = {
+                    when {
+                        nameDup != null -> Text("Already registered in ${st.cls} ${st.year}: ${nameDup.student.idText}. Open that student and add the class there.")
+                        sameName != null -> Text("Note: ${sameName.student.name} (${sameName.student.idText}) already exists. To add a class for the same child, open that student instead.")
+                    }
+                })
             OutlinedTextField(remarks, { remarks = it }, label = { Text("Remarks") }, modifier = Modifier.fillMaxWidth())
-
-            SectionCard(if (existing != null && !feeFieldsChanged) "Fee assessment (approved – unchanged)" else "Fee calculation (current rates)") {
-                FeeBreakdown(shown)
-                val perPart = com.school.feemanager.domain.ScheduleCalculator.splitAmounts(shown.netTotal, term.parts)
-                Spacer(Modifier.height(4.dp))
-                Text("${term.label}: ${perPart.distinct().joinToString(" / ") { Money.format(it) }} per ${if (term == PaymentTerm.THREE_INST) "installment" else "month"}",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (existing != null) KeyValue("Already paid", Money.mmk(existing.paid))
+            if (id == null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(withClass, { withClass = it })
+                    Text("Enroll in a class now (more classes can be added later)")
+                }
+                if (withClass) {
+                    SectionCard("Class") { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { EnrollmentFields(snap, st, isNew = true) } }
+                    val fee = FeeCalculator.assess(snap.card, st.cls, st.type, st.status, st.book, st.bp ?: 0, st.periodInt ?: 12)
+                    FeePreview(snap, st, fee, "Fee calculation (current rates)", null)
+                }
+            } else {
+                Text("Classes, fees and schedules are edited per class on the student page.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                Button(onClick = { if (feeFieldsChanged) confirm = true else vm.saveStudent(id, form, onSaved) }, enabled = valid, modifier = Modifier.weight(1f)) { Text("Save") }
+                Button(onClick = { vm.saveStudent(id, StudentForm(enrollNo, name, remarks), if (id == null && withClass) st.form() else null, onSaved) }, enabled = valid, modifier = Modifier.weight(1f)) { Text("Save") }
+            }
+        }
+    }
+}
+
+// ============================================================== add / edit class enrollment
+@Composable
+fun EnrollmentEditScreen(vm: AppViewModel, snap: AppSnapshot, studentId: Long, enrollmentId: Long?, onBack: () -> Unit, onSaved: () -> Unit) {
+    val l = snap.ledger(studentId)
+    if (l == null) { Column { AppTopBar("Class", onBack); EmptyState("Student not found") }; return }
+    val existing = enrollmentId?.let { l.enrollment(it) }
+    // New class: suggest the class after the latest one (promotion), as an Old student.
+    val latest = l.enrollments.maxByOrNull { it.enrollment.startDate }?.enrollment
+    val suggested = latest?.let { snap.card.classNames.getOrNull(snap.card.classNames.indexOf(it.className) + 1) ?: it.className }
+    val st = remember { EnrollmentState(snap, existing?.enrollment, suggested, if (l.enrollments.isEmpty()) StudentStatus.NEW else StudentStatus.OLD) }
+    var confirm by remember { mutableStateOf(false) }
+    val e0 = existing?.enrollment
+    val preview = FeeCalculator.assess(snap.card, st.cls, st.type, st.status, st.book, st.bp ?: 0, st.periodInt ?: 12)
+    val feeChanged = e0 != null && (e0.className != st.cls || e0.type != st.type || e0.status != st.status || e0.bookType != st.book || e0.discountBp != (st.bp ?: 0) || e0.periodMonths != st.periodInt)
+    val shown = if (existing != null && !feeChanged) existing.fee else preview
+    val dup = l.enrollments.firstOrNull { it.enrollment.id != enrollmentId && it.enrollment.className == st.cls && it.enrollment.academicYear.equals(st.year.trim(), true) }
+    val valid = st.valid && dup == null
+
+    Column(Modifier.fillMaxSize()) {
+        AppTopBar(if (existing == null) "Add class – ${l.student.name}" else "Edit ${existing.enrollment.title}", onBack)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (existing == null && latest != null) Text("Current: ${l.enrollments.filter { it.enrollment.active }.joinToString { it.enrollment.title }.ifEmpty { "none active" }}. Each class has its own start date, period, fees and schedule.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            EnrollmentFields(snap, st, isNew = existing == null)
+            if (dup != null) Text("Already enrolled in ${st.cls} for ${st.year}.", color = Red, style = MaterialTheme.typography.bodySmall)
+            FeePreview(snap, st, shown, if (existing != null && !feeChanged) "Fee assessment (approved – unchanged)" else "Fee calculation (current rates)", existing?.paid)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                Button(onClick = { if (feeChanged) confirm = true else vm.saveEnrollment(enrollmentId, studentId, st.form()) { onSaved() } }, enabled = valid, modifier = Modifier.weight(1f)) { Text("Save") }
             }
         }
     }
     if (confirm && existing != null) ConfirmDialog(
         title = "Re-assess fees?",
-        text = "Changing class, type, status, book type or discount re-assesses this student with the CURRENT fee rates.\n\nNet total: ${Money.mmk(existing.net)} → ${Money.mmk(preview.netTotal)}\nAlready paid: ${Money.mmk(existing.paid)}",
-        confirmLabel = "Save", onConfirm = { vm.saveStudent(id, form, onSaved) }, onDismiss = { confirm = false },
+        text = "Changing class, type, status, book type, discount or period re-assesses this class with the CURRENT fee rates.\n\nNet total: ${Money.mmk(existing.net)} → ${Money.mmk(preview.netTotal)}\nAlready paid: ${Money.mmk(existing.paid)}",
+        confirmLabel = "Save", onConfirm = { vm.saveEnrollment(enrollmentId, studentId, st.form()) { onSaved() } }, onDismiss = { confirm = false },
     )
 }

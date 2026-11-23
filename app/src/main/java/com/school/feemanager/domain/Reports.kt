@@ -46,6 +46,11 @@ data class ReportTable(
     }
 }
 
+/** One enrollment row of a report, with its student. */
+private data class ERow(val s: StudentRecord, val e: EnrollmentLedger) {
+    val en: EnrollmentRecord get() = e.enrollment
+}
+
 object Reports {
     val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("dd-MMM-yyyy")
     private val MONTH: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM yyyy")
@@ -59,127 +64,138 @@ object Reports {
         today: LocalDate,
     ): ReportTable {
         val byId = ledgers.associateBy { it.student.id }
-        val students = ledgers
+        val enrollmentById = ledgers.flatMap { it.enrollments }.associateBy { it.enrollment.id }
+        val rowsAll = ledgers
             .filter { f.includeInactive || it.student.active }
-            .filter { f.className == null || it.student.className == f.className }
             .filter { matches(it.student, f.search) }
-            .sortedWith(compareBy<StudentLedger> { classIndex(classOrder, it.student.className) }.thenBy { it.student.name.lowercase() })
-        val statusFiltered = if (f.status == null) students else students.filter { statusMatches(it, f.status) }
+            .flatMap { l -> l.enrollments.map { ERow(l.student, it) } }
+            .filter { f.includeInactive || it.en.active }
+            .filter { f.className == null || it.en.className == f.className }
+            .sortedWith(compareBy<ERow> { classIndex(classOrder, it.en.className) }.thenBy { it.s.name.lowercase() }.thenBy { it.en.startDate })
+        val statusFiltered = if (f.status == null) rowsAll else rowsAll.filter { statusMatches(it.e, f.status) }
 
         val pays = payments.filter { !it.voided }
             .filter { f.from == null || !it.date.isBefore(f.from) }
             .filter { f.to == null || !it.date.isAfter(f.to) }
             .filter { p ->
                 val l = byId[p.studentId]
-                (f.className == null || l?.student?.className == f.className) &&
+                val e = enrollmentById[p.enrollmentId]?.enrollment
+                (f.className == null || e?.className == f.className) &&
                     (f.search.isBlank() || (l != null && matches(l.student, f.search)) || p.receiptNo.contains(f.search.trim(), true))
             }
-            .sortedWith(compareBy<PaymentRecord> { it.date }.thenBy { it.id })
+            .sortedWith(compareBy<PaymentRecord> { it.date }.thenBy { it.receiptId }.thenBy { it.id })
 
         val sub = subtitle(f, type, today)
         return when (type) {
             ReportType.ENROLLMENT -> ReportTable(
                 type.title, sub,
-                listOf("Student ID", "Student Name", "Class", "Type", "New/Old", "Book Type", "Payment Term", "Status", "Registered", "Active"),
+                listOf("Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Start Date", "Months", "Type", "New/Old", "Book Type", "Payment Term", "Status", "Active"),
                 statusFiltered.map {
-                    val s = it.student
-                    listOf(s.code, s.name, s.className, s.type.label, s.status.label, s.bookType.label, s.term.label, it.status.label, s.registeredOn.format(DATE), if (s.active) "Yes" else "No")
+                    val s = it.s; val e = it.en
+                    listOf(s.enrollNo, s.code, s.name, e.className, e.academicYear, e.startDate.format(DATE), e.periodMonths.toString(), e.type.label, e.status.label,
+                        e.bookType.label, e.term.label, it.e.status.label, if (s.active && e.active) "Yes" else "No")
                 },
-                listOf("TOTAL", "${statusFiltered.size} students", null, null, null, null, null, null, null, null),
+                listOf<Any?>("TOTAL", "${statusFiltered.map { it.s.id }.distinct().size} students", "${statusFiltered.size} enrollments") + List(10) { null },
             )
 
             ReportType.FEE_ASSESSMENT -> {
                 val rows = statusFiltered.map {
-                    val s = it.student; val fe = it.fee
-                    listOf<Any?>(s.code, s.name, s.className, s.type.label, fe.trainingFee, fe.instrumentFee, fe.bookFee, fe.hostelFee, fe.laundryFee, fe.entranceFee, fe.grossTotal, Money.bpToPercentText(fe.discountBp), fe.discountAmount, fe.netTotal)
+                    val s = it.s; val fe = it.e.fee
+                    listOf<Any?>(s.enrollNo, s.code, s.name, it.en.className, it.en.academicYear, it.en.type.label, fe.trainingFee, fe.instrumentFee, fe.bookFee, fe.hostelFee, fe.laundryFee, fe.entranceFee,
+                        fe.grossTotal, Money.bpToPercentText(fe.discountBp), fe.discountAmount, fe.netTotal)
                 }
                 ReportTable(
                     type.title, sub,
-                    listOf("Student ID", "Student Name", "Class", "Type", "Training", "Instrument", "Book", "Hostel", "Laundry", "Entrance", "Gross Total", "Disc %", "Disc Amt", "Net Total"),
-                    rows, totalsRow(rows, 14, setOf(4, 5, 6, 7, 8, 9, 10, 12, 13)),
+                    listOf("Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Type", "Training", "Instrument", "Book", "Hostel", "Laundry", "Entrance", "Gross Total", "Disc %", "Disc Amt", "Net Total"),
+                    rows, totalsRow(rows, 16, setOf(6, 7, 8, 9, 10, 11, 12, 14, 15)),
                 )
             }
 
             ReportType.OUTSTANDING -> {
-                val rows = statusFiltered.filter { it.balance > 0 }.map {
-                    val s = it.student
-                    listOf<Any?>(s.code, s.name, s.className, s.type.label, s.term.label, it.net, it.paid, it.balance, it.status.label)
+                val rows = statusFiltered.filter { it.e.balance > 0 }.map {
+                    val s = it.s
+                    listOf<Any?>(s.enrollNo, s.code, s.name, it.en.className, it.en.academicYear, it.en.type.label, it.en.term.label, it.e.net, it.e.paid, it.e.balance, it.e.status.label)
                 }
-                ReportTable(type.title, sub, listOf("Student ID", "Student Name", "Class", "Type", "Term", "Net Total", "Paid", "Balance Due", "Status"), rows, totalsRow(rows, 9, setOf(5, 6, 7)))
+                ReportTable(type.title, sub, listOf("Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Type", "Term", "Net Total", "Paid", "Balance Due", "Status"), rows, totalsRow(rows, 11, setOf(7, 8, 9)))
             }
 
             ReportType.DAILY_COLLECTION -> {
                 val rows = pays.map { p ->
                     val s = byId[p.studentId]?.student
-                    listOf<Any?>(p.date.format(DATE), p.receiptNo, s?.code ?: "", s?.name ?: "?", s?.className ?: "", p.paymentFor, p.receivedBy, p.amount)
+                    val e = enrollmentById[p.enrollmentId]?.enrollment
+                    listOf<Any?>(p.date.format(DATE), p.receiptNo, s?.enrollNo ?: "", s?.code ?: "", s?.name ?: "?", e?.className ?: "", e?.academicYear ?: "", p.paymentFor, p.receivedBy, p.amount)
                 }
-                ReportTable(type.title, sub, listOf("Date", "Receipt No.", "Student ID", "Student Name", "Class", "Payment For", "Received By", "Amount (MMK)"), rows, totalsRow(rows, 8, setOf(7)))
+                ReportTable(type.title, sub, listOf("Date", "Receipt No.", "Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Payment For", "Received By", "Amount (MMK)"), rows, totalsRow(rows, 10, setOf(9)))
             }
 
             ReportType.MONTHLY_COLLECTION -> {
                 val rows = pays.groupBy { YearMonth.from(it.date) }.toSortedMap().map { (ym, list) ->
                     val days = list.map { it.date }.distinct().size
-                    listOf<Any?>(ym.format(MONTH), list.size.toLong(), days.toLong(), list.sumOf { it.amount })
+                    listOf<Any?>(ym.format(MONTH), list.map { it.receiptId }.distinct().size.toLong(), days.toLong(), list.sumOf { it.amount })
                 }
                 ReportTable(type.title, sub, listOf("Month", "Receipts", "Collection Days", "Amount (MMK)"), rows, totalsRow(rows, 4, setOf(1, 2, 3)))
             }
 
             ReportType.CLASS_WISE -> {
-                val classes = (classOrder + students.map { it.student.className }).distinct()
+                val classes = (classOrder + rowsAll.map { it.en.className }).distinct()
                     .filter { f.className == null || it == f.className }
                 val rows = classes.map { c ->
-                    val l = students.filter { it.student.className == c }
-                    val rec = l.sumOf { it.net }; val col = l.sumOf { it.paid }
-                    listOf<Any?>(c, l.count { it.student.type == StudentType.DAY }.toLong(), l.count { it.student.type == StudentType.HOSTEL }.toLong(), l.size.toLong(), rec, col, rec - col, pct(col, rec))
+                    val l = rowsAll.filter { it.en.className == c }
+                    val rec = l.sumOf { it.e.net }; val col = l.sumOf { it.e.paid }
+                    listOf<Any?>(c, l.count { it.en.type == StudentType.DAY }.toLong(), l.count { it.en.type == StudentType.HOSTEL }.toLong(), l.size.toLong(), rec, col, rec - col, pct(col, rec))
                 }
                 val t = totalsRow(rows, 8, setOf(1, 2, 3, 4, 5, 6))!!.toMutableList()
                 t[7] = pct(t[5] as Long, t[4] as Long)
-                ReportTable(type.title, sub, listOf("Class", "Day", "Hostel", "Total Students", "Receivable", "Collected", "Balance Due", "Collected %"), rows, t)
+                ReportTable(type.title, sub, listOf("Class", "Day", "Hostel", "Total Enrolled", "Receivable", "Collected", "Balance Due", "Collected %"), rows, t)
             }
 
             ReportType.DAY_VS_HOSTEL -> {
                 val rows = StudentType.entries.map { ty ->
-                    val l = students.filter { it.student.type == ty }
-                    val rec = l.sumOf { it.net }; val col = l.sumOf { it.paid }
-                    listOf<Any?>(ty.label, l.size.toLong(), l.count { it.student.status == StudentStatus.NEW }.toLong(), l.count { it.student.status == StudentStatus.OLD }.toLong(), rec, col, rec - col, pct(col, rec))
+                    val l = rowsAll.filter { it.en.type == ty }
+                    val rec = l.sumOf { it.e.net }; val col = l.sumOf { it.e.paid }
+                    listOf<Any?>(ty.label, l.size.toLong(), l.count { it.en.status == StudentStatus.NEW }.toLong(), l.count { it.en.status == StudentStatus.OLD }.toLong(), rec, col, rec - col, pct(col, rec))
                 }
                 val t = totalsRow(rows, 8, setOf(1, 2, 3, 4, 5, 6))!!.toMutableList()
                 t[7] = pct(t[5] as Long, t[4] as Long)
-                ReportTable(type.title, sub, listOf("Student Type", "Students", "New", "Old", "Receivable", "Collected", "Balance Due", "Collected %"), rows, t)
+                ReportTable(type.title, sub, listOf("Student Type", "Enrollments", "New", "Old", "Receivable", "Collected", "Balance Due", "Collected %"), rows, t)
             }
 
             ReportType.PAYMENT_SCHEDULE -> {
-                val rows = students.flatMap { l ->
-                    l.lines.filter { f.status == null || it.status == f.status }.map { ls ->
-                        val s = l.student
-                        listOf<Any?>(s.code, s.name, s.className, s.term.label, l.net, ls.line.label, ls.line.dueDate.format(DATE), ls.line.amount, ls.paid, ls.remaining, ls.status.label)
+                val rows = rowsAll.flatMap { r ->
+                    r.e.lines.filter { f.status == null || it.status == f.status }.map { ls ->
+                        listOf<Any?>(r.s.enrollNo, r.s.code, r.s.name, r.en.className, r.en.academicYear, r.en.term.label, r.e.net, ls.line.label, ls.line.dueDate.format(DATE), ls.line.amount, ls.paid, ls.remaining, ls.status.label)
                     }
                 }
                 ReportTable(
                     type.title, sub,
-                    listOf("Student ID", "Student Name", "Class", "Payment Term", "Net Total", "Part", "Due Date", "Scheduled", "Actual Paid", "Remaining", "Status"),
-                    rows, totalsRow(rows, 11, setOf(7, 8, 9)),
+                    listOf("Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Payment Term", "Net Total", "Part", "Due Date", "Scheduled", "Actual Paid", "Remaining", "Status"),
+                    rows, totalsRow(rows, 13, setOf(9, 10, 11)),
                 )
             }
 
             ReportType.UNPAID, ReportType.PARTIALLY_PAID -> {
                 val want = if (type == ReportType.UNPAID) PayStatus.UNPAID else PayStatus.PARTIAL
-                val rows = students.filter { it.paymentState == want }.map {
-                    val s = it.student
-                    val nextDue = it.lines.firstOrNull { ls -> ls.remaining > 0 }
-                    listOf<Any?>(s.code, s.name, s.className, s.type.label, s.term.label, it.net, it.paid, it.balance, nextDue?.line?.dueDate?.format(DATE) ?: "", if (it.overdue) "Yes" else "No")
+                val rows = rowsAll.filter { it.e.paymentState == want }.map {
+                    val nextDue = it.e.lines.firstOrNull { ls -> ls.remaining > 0 }
+                    listOf<Any?>(it.s.enrollNo, it.s.code, it.s.name, it.en.className, it.en.academicYear, it.en.type.label, it.en.term.label, it.e.net, it.e.paid, it.e.balance,
+                        nextDue?.line?.dueDate?.format(DATE) ?: "", if (it.e.overdue) "Yes" else "No")
                 }
-                ReportTable(type.title, sub, listOf("Student ID", "Student Name", "Class", "Type", "Term", "Net Total", "Paid", "Balance Due", "Next Due", "Overdue"), rows, totalsRow(rows, 10, setOf(5, 6, 7)))
+                ReportTable(type.title, sub, listOf("Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Type", "Term", "Net Total", "Paid", "Balance Due", "Next Due", "Overdue"), rows, totalsRow(rows, 12, setOf(7, 8, 9)))
             }
         }
     }
 
     fun matches(s: StudentRecord, q: String): Boolean {
         val t = q.trim()
-        return t.isEmpty() || s.name.contains(t, true) || s.code.contains(t, true)
+        return t.isEmpty() || s.name.contains(t, true) || s.code.contains(t, true) || s.enrollNo.contains(t, true)
     }
 
     fun statusMatches(l: StudentLedger, st: PayStatus): Boolean = when (st) {
+        PayStatus.OVERDUE -> l.overdue && l.paymentState != PayStatus.PAID
+        else -> l.paymentState == st
+    }
+
+    fun statusMatches(l: EnrollmentLedger, st: PayStatus): Boolean = when (st) {
         PayStatus.OVERDUE -> l.overdue && l.paymentState != PayStatus.PAID
         else -> l.paymentState == st
     }

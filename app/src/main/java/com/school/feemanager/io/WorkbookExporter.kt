@@ -1,6 +1,8 @@
 package com.school.feemanager.io
 
 import com.school.feemanager.domain.DashboardSummary
+import com.school.feemanager.domain.EnrollmentLedger
+import com.school.feemanager.domain.StudentRecord
 import com.school.feemanager.domain.FeeRateCard
 import com.school.feemanager.domain.PaymentRecord
 import com.school.feemanager.domain.PaymentTerm
@@ -17,12 +19,15 @@ import java.time.format.DateTimeFormatter
 
 /**
  * Writes the database back out in the same five-sheet structure as School_Fee_Management.xlsx
- * (values, not formulas). Student_Register and Cash_Collection get extra columns
- * (Student ID, Active / Received By) to the right of the original ones, so a file exported
- * here can be imported again without losing student IDs.
+ * (values, not formulas). Student_Register has ONE ROW PER ENROLLMENT (a student in two classes has
+ * two rows with the same Student ID). Extra columns (Student ID, Active, Enroll No., Academic Year,
+ * Start Date, Period; Received By on Cash_Collection) are added to the right of the original ones,
+ * so a file exported here can be imported again without losing anything.
  */
 object WorkbookExporter {
     private val D: DateTimeFormatter = DateTimeFormatter.ofPattern("dd-MMM-yyyy")
+
+    private data class Row(val s: StudentRecord, val e: EnrollmentLedger)
 
     fun export(
         schoolName: String,
@@ -32,10 +37,11 @@ object WorkbookExporter {
         dash: DashboardSummary,
     ): ByteArray {
         val w = XlsxWriter()
-        val students = ledgers.sortedWith(compareBy<StudentLedger> { card.classNames.indexOf(it.student.className).let { i -> if (i < 0) 999 else i } }.thenBy { it.student.code })
+        val rows = ledgers.flatMap { l -> l.enrollments.map { Row(l.student, it) } }
+            .sortedWith(compareBy<Row> { card.classNames.indexOf(it.e.enrollment.className).let { i -> if (i < 0) 999 else i } }.thenBy { it.s.code }.thenBy { it.e.enrollment.startDate })
         dashboard(w, schoolName, dash)
-        register(w, students)
-        schedule(w, students)
+        register(w, rows)
+        schedule(w, rows)
         cash(w, ledgers, payments)
         rates(w, card)
         return w.toBytes()
@@ -72,68 +78,78 @@ object WorkbookExporter {
         (1..9).forEach { w.width(it, if (it == 1) 26.0 else 17.0) }
     }
 
-    private fun register(w: XlsxWriter, list: List<StudentLedger>) {
+    private fun register(w: XlsxWriter, list: List<Row>) {
         w.sheet(WorkbookImporter.REGISTER)
         w.set(1, 1, "STUDENT REGISTER & FEE CALCULATION", STYLE_TITLE)
         val headers = listOf("No.", "Student Name", "Class", "Student Type\n(Day/Hostel)", "New/Old\nStudent", "Book Type\n(Myanmar/\nIntl)",
             "Training Fee", "Instrument Fee", "Book Fee", "Hostel Fee", "Laundry Fee\n(Annual)", "Entrance Fee", "Gross Total", "Discount %",
-            "Discount Amt", "NET TOTAL\nRECEIVABLE", "Payment Term\n(3-inst/Monthly)", "Paid Amount\n(Cumulative)", "Balance Due", "Remarks", "Student ID", "Active")
+            "Discount Amt", "NET TOTAL\nRECEIVABLE", "Payment Term\n(3-inst/Monthly)", "Paid Amount\n(Cumulative)", "Balance Due", "Remarks", "Student ID", "Active",
+            "Enroll No.", "Academic Year", "Start Date", "Period (Months)")
         headers.forEachIndexed { i, h -> w.set(2, i + 1, h, STYLE_HEADER) }
-        list.forEachIndexed { i, l ->
-            val r = i + 3; val s = l.student; val f = l.fee
-            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, s.name); w.set(r, 3, s.className); w.set(r, 4, s.type.label); w.set(r, 5, s.status.label)
-            w.set(r, 6, s.bookType.label); w.set(r, 7, f.trainingFee); w.set(r, 8, f.instrumentFee); w.set(r, 9, f.bookFee)
-            if (s.type == StudentType.HOSTEL) { w.set(r, 10, f.hostelFee); w.set(r, 11, f.laundryFee) }
+        list.forEachIndexed { i, row ->
+            val r = i + 3; val s = row.s; val l = row.e; val e = l.enrollment; val f = l.fee
+            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, s.name); w.set(r, 3, e.className); w.set(r, 4, e.type.label); w.set(r, 5, e.status.label)
+            w.set(r, 6, e.bookType.label); w.set(r, 7, f.trainingFee); w.set(r, 8, f.instrumentFee); w.set(r, 9, f.bookFee)
+            if (e.type == StudentType.HOSTEL) { w.set(r, 10, f.hostelFee); w.set(r, 11, f.laundryFee) }
             if (f.entranceFee > 0) w.set(r, 12, f.entranceFee)
             w.set(r, 13, f.grossTotal); w.set(r, 14, f.discountBp / 10000.0, STYLE_PERCENT); w.set(r, 15, f.discountAmount)
-            w.set(r, 16, f.netTotal, STYLE_BOLD_NUMBER); w.set(r, 17, s.term.label); w.set(r, 18, l.paid); w.set(r, 19, l.balance)
-            w.set(r, 20, s.remarks.ifEmpty { null }); w.set(r, 21, s.code); w.set(r, 22, if (s.active) "Yes" else "No")
+            w.set(r, 16, f.netTotal, STYLE_BOLD_NUMBER); w.set(r, 17, e.term.label); w.set(r, 18, l.paid); w.set(r, 19, l.balance)
+            w.set(r, 20, listOf(s.remarks, e.remarks).filter { it.isNotBlank() }.joinToString(" / ").ifEmpty { null }); w.set(r, 21, s.code)
+            w.set(r, 22, if (s.active && e.active) "Yes" else "No")
+            w.set(r, 23, s.enrollNo.ifEmpty { null }); w.set(r, 24, e.academicYear); w.set(r, 25, e.startDate.format(D)); w.set(r, 26, e.periodMonths.toLong())
         }
         val tr = list.size + 3
         w.set(tr, 1, "TOTALS", STYLE_BOLD)
-        listOf<Pair<Int, (StudentLedger) -> Long>>(7 to { l -> l.fee.trainingFee }, 8 to { l -> l.fee.instrumentFee }, 9 to { l -> l.fee.bookFee }, 10 to { l -> l.fee.hostelFee },
-            11 to { l -> l.fee.laundryFee }, 12 to { l -> l.fee.entranceFee }, 13 to { l -> l.fee.grossTotal }, 15 to { l -> l.fee.discountAmount },
-            16 to { l -> l.net }, 18 to { l -> l.paid }, 19 to { l -> l.balance })
+        listOf<Pair<Int, (Row) -> Long>>(7 to { x -> x.e.fee.trainingFee }, 8 to { x -> x.e.fee.instrumentFee }, 9 to { x -> x.e.fee.bookFee }, 10 to { x -> x.e.fee.hostelFee },
+            11 to { x -> x.e.fee.laundryFee }, 12 to { x -> x.e.fee.entranceFee }, 13 to { x -> x.e.fee.grossTotal }, 15 to { x -> x.e.fee.discountAmount },
+            16 to { x -> x.e.net }, 18 to { x -> x.e.paid }, 19 to { x -> x.e.balance })
             .forEach { (c, fn) -> w.set(tr, c, list.sumOf(fn), STYLE_BOLD_NUMBER) }
-        w.width(1, 6.0); w.width(2, 26.0); (3..19).forEach { w.width(it, 14.0) }; w.width(20, 24.0); w.width(21, 12.0)
+        w.width(1, 6.0); w.width(2, 26.0); (3..19).forEach { w.width(it, 14.0) }; w.width(20, 24.0); (21..26).forEach { w.width(it, 13.0) }
     }
 
-    private fun schedule(w: XlsxWriter, list: List<StudentLedger>) {
+    private fun schedule(w: XlsxWriter, list: List<Row>) {
         w.sheet(WorkbookImporter.SCHEDULE)
         w.set(1, 1, "PAYMENT SCHEDULE – 3 Instalments & Monthly", STYLE_TITLE)
-        val headers = listOf("No.", "Student Name", "Class", "Payment Term", "Net Total", "Inst-1", "Inst-2", "Inst-3") + (1..12).map { "M-$it" } + listOf("Total Paid", "Remaining", "Status", "Student ID")
+        val headers = listOf("No.", "Student Name", "Class", "Payment Term", "Net Total", "Inst-1", "Inst-2", "Inst-3") + (1..12).map { "M-$it" } +
+            listOf("Total Paid", "Remaining", "Status", "Student ID", "Enroll No.", "Academic Year") + (13..24).map { "M-$it" }
         headers.forEachIndexed { i, h -> w.set(2, i + 1, h, STYLE_HEADER) }
-        list.forEachIndexed { i, l ->
-            val r = i + 3
-            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, l.student.name); w.set(r, 3, l.student.className); w.set(r, 4, l.student.term.label); w.set(r, 5, l.net)
-            val base = if (l.student.term == PaymentTerm.THREE_INST) 6 else 9
-            l.lines.forEach { ls -> w.set(r, base + ls.line.seq - 1, ls.line.amount) }
-            w.set(r, 21, l.paid); w.set(r, 22, l.balance); w.set(r, 23, l.status.label); w.set(r, 24, l.student.code)
+        fun col(term: PaymentTerm, seq: Int) = if (term == PaymentTerm.THREE_INST) 5 + seq else if (seq <= 12) 8 + seq else 26 + (seq - 12)
+        list.forEachIndexed { i, row ->
+            val r = i + 3; val l = row.e; val e = l.enrollment
+            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, row.s.name); w.set(r, 3, e.className); w.set(r, 4, e.term.label); w.set(r, 5, l.net)
+            l.lines.forEach { ls -> w.set(r, col(e.term, ls.line.seq), ls.line.amount) }
+            w.set(r, 21, l.paid); w.set(r, 22, l.balance); w.set(r, 23, l.status.label); w.set(r, 24, row.s.code)
+            w.set(r, 25, row.s.enrollNo.ifEmpty { null }); w.set(r, 26, e.academicYear)
         }
         val tr = list.size + 3
         w.set(tr, 1, "TOTALS", STYLE_BOLD)
-        w.set(tr, 5, list.sumOf { it.net }, STYLE_BOLD_NUMBER)
-        (1..3).forEach { seq -> w.set(tr, 5 + seq, list.filter { it.student.term == PaymentTerm.THREE_INST }.sumOf { l -> l.lines.firstOrNull { it.line.seq == seq }?.line?.amount ?: 0L }, STYLE_BOLD_NUMBER) }
-        (1..12).forEach { seq -> w.set(tr, 8 + seq, list.filter { it.student.term == PaymentTerm.MONTHLY }.sumOf { l -> l.lines.firstOrNull { it.line.seq == seq }?.line?.amount ?: 0L }, STYLE_BOLD_NUMBER) }
-        w.set(tr, 21, list.sumOf { it.paid }, STYLE_BOLD_NUMBER); w.set(tr, 22, list.sumOf { it.balance }, STYLE_BOLD_NUMBER)
-        w.width(2, 26.0); (3..24).forEach { w.width(it, 12.0) }
+        w.set(tr, 5, list.sumOf { it.e.net }, STYLE_BOLD_NUMBER)
+        (1..3).forEach { seq -> w.set(tr, 5 + seq, list.filter { it.e.enrollment.term == PaymentTerm.THREE_INST }.sumOf { x -> x.e.lines.firstOrNull { it.line.seq == seq }?.line?.amount ?: 0L }, STYLE_BOLD_NUMBER) }
+        (1..24).forEach { seq ->
+            val sum = list.filter { it.e.enrollment.term == PaymentTerm.MONTHLY }.sumOf { x -> x.e.lines.firstOrNull { it.line.seq == seq }?.line?.amount ?: 0L }
+            if (seq <= 12 || sum > 0) w.set(tr, col(PaymentTerm.MONTHLY, seq), sum, STYLE_BOLD_NUMBER)
+        }
+        w.set(tr, 21, list.sumOf { it.e.paid }, STYLE_BOLD_NUMBER); w.set(tr, 22, list.sumOf { it.e.balance }, STYLE_BOLD_NUMBER)
+        w.width(2, 26.0); (3..38).forEach { w.width(it, 12.0) }
     }
 
     private fun cash(w: XlsxWriter, ledgers: List<StudentLedger>, payments: List<PaymentRecord>) {
         w.sheet(WorkbookImporter.CASH)
         w.set(1, 1, "DAILY CASH COLLECTION REGISTER", STYLE_TITLE)
-        listOf("No.", "Student Name", "Class", "Date", "Amount Received", "Receipt No.", "Payment For", "Remarks", "Student ID", "Received By")
+        listOf("No.", "Student Name", "Class", "Date", "Amount Received", "Receipt No.", "Payment For", "Remarks", "Student ID", "Received By", "Enroll No.", "Academic Year")
             .forEachIndexed { i, h -> w.set(2, i + 1, h, STYLE_HEADER) }
         val byId = ledgers.associateBy { it.student.id }
-        val list = payments.filter { !it.voided }.sortedWith(compareBy<PaymentRecord> { it.date }.thenBy { it.id })
+        val enrollments = ledgers.flatMap { it.enrollments }.associateBy { it.enrollment.id }
+        val list = payments.filter { !it.voided }.sortedWith(compareBy<PaymentRecord> { it.date }.thenBy { it.receiptId }.thenBy { it.id })
         list.forEachIndexed { i, p ->
-            val r = i + 3; val s = byId[p.studentId]?.student
-            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, s?.name ?: "?"); w.set(r, 3, s?.className ?: "")
+            val r = i + 3; val s = byId[p.studentId]?.student; val e = enrollments[p.enrollmentId]?.enrollment
+            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, s?.name ?: "?"); w.set(r, 3, e?.className ?: "")
             w.set(r, 4, p.date.format(D)); w.set(r, 5, p.amount); w.set(r, 6, p.receiptNo); w.set(r, 7, p.paymentFor)
             w.set(r, 8, p.remarks.ifEmpty { null }); w.set(r, 9, s?.code); w.set(r, 10, p.receivedBy)
+            w.set(r, 11, s?.enrollNo?.ifEmpty { null }); w.set(r, 12, e?.academicYear)
         }
         w.set(list.size + 3, 1, "TOTALS", STYLE_BOLD); w.set(list.size + 3, 5, list.sumOf { it.amount }, STYLE_BOLD_NUMBER)
-        w.width(2, 26.0); w.width(4, 13.0); w.width(5, 16.0); w.width(6, 18.0); w.width(7, 16.0); w.width(8, 24.0); w.width(10, 14.0)
+        w.width(2, 26.0); w.width(4, 13.0); w.width(5, 16.0); w.width(6, 18.0); w.width(7, 16.0); w.width(8, 24.0); w.width(10, 14.0); w.width(11, 13.0); w.width(12, 13.0)
     }
 
     /** Same cell positions as the original Fee_Rates sheet, so the file re-imports cleanly. */
@@ -162,7 +178,13 @@ object WorkbookExporter {
         w.set(lr + 1, 1, "Laundry Fee / month"); w.set(lr + 1, 2, card.laundryPerMonth); w.set(lr + 1, 3, "Months/Year"); w.set(lr + 1, 4, card.monthsPerYear.toLong())
         w.set(lr + 3, 1, "Entrance Fee (New Students only)", STYLE_BOLD)
         w.set(lr + 4, 1, "Entrance Fee"); w.set(lr + 4, 2, card.entranceFee)
-        w.width(1, 30.0); w.width(2, 18.0); w.width(6, 24.0); w.width(7, 16.0); (11..15).forEach { w.width(it, 18.0) }
+        // Per-class academic year (added by the app)
+        w.set(4, 17, "E)  ACADEMIC YEAR PER CLASS", STYLE_BOLD)
+        listOf(17 to "Class", 18 to "Start Month", 19 to "Start Day", 20 to "Period (Months)").forEach { (c, h) -> w.set(5, c, h, STYLE_HEADER) }
+        classes.forEachIndexed { i, c ->
+            w.set(6 + i, 17, c.className); w.set(6 + i, 18, c.startMonth.toLong()); w.set(6 + i, 19, c.startDay.toLong()); w.set(6 + i, 20, c.periodMonths.toLong())
+        }
+        w.width(1, 30.0); w.width(2, 18.0); w.width(6, 24.0); w.width(7, 16.0); (11..15).forEach { w.width(it, 18.0) }; (17..20).forEach { w.width(it, 14.0) }
     }
 
     /** Any report table as a one-sheet workbook. */

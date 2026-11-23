@@ -9,50 +9,9 @@ import com.school.feemanager.domain.StudentStatus
 import com.school.feemanager.domain.StudentType
 import java.io.InputStream
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-data class ImportIssue(val sheet: String, val row: Int, val message: String, val isError: Boolean) {
-    override fun toString(): String = "${if (isError) "ERROR" else "Warning"} – $sheet row $row: $message"
-}
-
-data class ImportedStudent(
-    val row: Int,
-    val code: String?,
-    val name: String,
-    val className: String,
-    val type: StudentType,
-    val status: StudentStatus,
-    val bookType: BookType,
-    val discountBp: Int,
-    val term: PaymentTerm,
-    val remarks: String,
-)
-
-data class ImportedPayment(
-    val row: Int,
-    val studentName: String,
-    val className: String,
-    val studentCode: String?,
-    val date: LocalDate,
-    val amount: Long,
-    val receiptNo: String,
-    val paymentFor: String,
-    val remarks: String,
-    val receivedBy: String,
-)
-
-data class WorkbookImport(
-    val sheetsFound: List<String>,
-    val rates: FeeRateCard?,
-    val students: List<ImportedStudent>,
-    val payments: List<ImportedPayment>,
-    val scheduleRows: Int,
-    val issues: List<ImportIssue>,
-) {
-    val errors: List<ImportIssue> get() = issues.filter { it.isError }
-    val warnings: List<ImportIssue> get() = issues.filter { !it.isError }
-}
+typealias WorkbookImport = ImportBundle
 
 /**
  * Reads School_Fee_Management.xlsx. Only INPUT cells are imported; every formula column
@@ -86,7 +45,7 @@ object WorkbookImporter {
         if (sheet(SCHEDULE) != null) {
             issues += ImportIssue(SCHEDULE, 0, "Payment_Schedule contains only formulas; schedules are regenerated from each student's Net Total ($scheduleRows rows seen)", false)
         }
-        return WorkbookImport(sheets.keys.toList(), rates, students, payments, scheduleRows, issues)
+        return ImportBundle("School_Fee_Management workbook", sheets.keys.toList(), rates, emptyList(), students, emptyList(), payments, issues)
     }
 
     // ---------------------------------------------------------------- Fee_Rates
@@ -128,12 +87,22 @@ object WorkbookImporter {
         if (laundry == null || months == null) issues += ImportIssue(RATES, 0, "Laundry fee / months not found – current values kept", false)
         if (entrance == null) issues += ImportIssue(RATES, 0, "Entrance fee not found – current value kept", false)
 
+        // E) per-class academic year table written by this app (columns Q–T); absent in the original workbook
+        val yearInfo = HashMap<String, Triple<Int, Int, Int>>()
+        for (r in 1..s.maxRow) {
+            val c = s.text(r, 17)
+            if (!classRe.matches(c)) continue
+            val m = s.number(r, 18)?.toInt(); val d = s.number(r, 19)?.toInt(); val p = s.number(r, 20)?.toInt()
+            if (m in 1..12 && d in 1..31 && p in 1..24) yearInfo[norm(c)] = Triple(m!!, d!!, p!!)
+        }
         val defaults = FeeRateCard.workbookDefaults()
         val classes = training.keys.mapIndexed { i, c ->
             val b = book[c]
             if (b == null) issues += ImportIssue(RATES, 0, "Book fees for $c not found – set to 0", false)
             if (hostel[c] == null) issues += ImportIssue(RATES, 0, "Hostel fee for $c not found – set to 0", false)
-            ClassRate(c, i, training[c]!!, b?.get(0) ?: 0, b?.get(1) ?: 0, b?.get(2) ?: 0, b?.get(3) ?: 0, hostel[c] ?: 0)
+            val y = yearInfo[c]
+            ClassRate(c, i, training[c]!!, b?.get(0) ?: 0, b?.get(1) ?: 0, b?.get(2) ?: 0, b?.get(3) ?: 0, hostel[c] ?: 0,
+                y?.first ?: 6, y?.second ?: 1, y?.third ?: (months?.toInt()?.takeIf { it in 1..24 } ?: 12))
         }
         return FeeRateCard(
             classes = classes,
@@ -147,11 +116,19 @@ object WorkbookImporter {
     private fun norm(c: String): String = c.trim().uppercase(Locale.US)
 
     // ---------------------------------------------------------- Student_Register
+    /** Column of a header (row 2) added by this app's export, e.g. "Student ID". */
+    private fun headerCol(s: XSheet, vararg names: String): Int? =
+        (1..60).firstOrNull { c -> names.any { n -> Fields.norm(s.text(2, c)) == Fields.norm(n) } }
+
     private fun parseStudents(s: XSheet, card: FeeRateCard, issues: MutableList<ImportIssue>): List<ImportedStudent> {
         val out = ArrayList<ImportedStudent>()
         val seen = HashSet<String>()
-        // Optional "Student ID" column (added by this app's own export).
-        val codeCol = (1..40).firstOrNull { s.text(2, it).equals("Student ID", true) }
+        // Optional columns added by this app's own export.
+        val codeCol = headerCol(s, "Student ID")
+        val enrollCol = headerCol(s, "Enroll No.")
+        val yearCol = headerCol(s, "Academic Year")
+        val startCol = headerCol(s, "Start Date")
+        val periodCol = headerCol(s, "Period (Months)")
         for (r in 3..s.maxRow) {
             if (s.text(r, 1).equals("TOTALS", true)) break
             val name = s.text(r, 2)
@@ -172,27 +149,23 @@ object WorkbookImporter {
                 issues += ImportIssue(sheetName, r, "$name: book type '${s.text(r, 6)}' – treated as International, as in Excel", false)
                 book = BookType.INTERNATIONAL
             }
-            val discCell = s.cell(r, 14)
-            var bp = 0
-            if (discCell != null && !discCell.isBlank && !discCell.isFormula) {
-                val d = discCell.number ?: discCell.text?.replace("%", "")?.trim()?.toDoubleOrNull()?.let { if (discCell.text!!.contains("%")) it / 100 else it }
-                when {
-                    d == null -> issues += ImportIssue(sheetName, r, "$name: discount '${discCell.asText()}' is not a number – 0% used", false)
-                    d < 0 -> issues += ImportIssue(sheetName, r, "$name: negative discount – 0% used", false)
-                    d <= 1.0 -> bp = Money.fractionToBp(d)
-                    d <= 100.0 -> { bp = Money.fractionToBp(d / 100); issues += ImportIssue(sheetName, r, "$name: discount $d read as $d%", false) }
-                    else -> issues += ImportIssue(sheetName, r, "$name: discount $d is above 100% – 0% used", false)
-                }
-            }
+            val bp = Fields.discountBp(s.cell(r, 14), name) { issues += ImportIssue(sheetName, r, it, false) }
             var term = PaymentTerm.parse(s.text(r, 17))
             if (term == null) {
                 issues += ImportIssue(sheetName, r, "$name: payment term '${s.text(r, 17)}' – 3-Inst used", false)
                 term = PaymentTerm.THREE_INST
             }
-            val key = name.lowercase(Locale.US) + "|" + cls
-            if (!seen.add(key)) { issues += ImportIssue(sheetName, r, "$name ($cls) appears more than once – duplicate skipped", true); continue }
             val code = codeCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }
-            out += ImportedStudent(r, code, name, cls, type, status, book, bp, term, s.text(r, 20))
+            val enrollNo = enrollCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }
+            val year = yearCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }
+            val start = startCol?.let { parseDate(s.cell(r, it)) }
+            val period = periodCol?.let { s.number(r, it)?.toInt() }?.takeIf { it in 1..24 }
+            val key = (code ?: enrollNo ?: name.lowercase(Locale.US)) + "|" + cls + "|" + (year ?: "")
+            if (!seen.add(key)) { issues += ImportIssue(sheetName, r, "$name ($cls${year?.let { " $it" } ?: ""}) appears more than once – duplicate skipped", true); continue }
+            out += ImportedStudent(
+                sheetName, r, code, enrollNo, name, s.text(r, 20),
+                ImportedEnrollment(cls, year, start, period, type, status, book, bp, term, ""),
+            )
         }
         return out
     }
@@ -200,9 +173,10 @@ object WorkbookImporter {
     // ----------------------------------------------------------- Cash_Collection
     private fun parsePayments(s: XSheet, issues: MutableList<ImportIssue>): List<ImportedPayment> {
         val out = ArrayList<ImportedPayment>()
-        val receipts = HashSet<String>()
-        val codeCol = (1..40).firstOrNull { s.text(2, it).equals("Student ID", true) }
-        val byCol = (1..40).firstOrNull { s.text(2, it).equals("Received By", true) }
+        val codeCol = headerCol(s, "Student ID")
+        val byCol = headerCol(s, "Received By")
+        val enrollCol = headerCol(s, "Enroll No.")
+        val yearCol = headerCol(s, "Academic Year")
         for (r in 3..s.maxRow) {
             if (s.text(r, 1).equals("TOTALS", true)) break
             val name = s.text(r, 2)
@@ -214,33 +188,19 @@ object WorkbookImporter {
             if (amount != Math.floor(amount)) issues += ImportIssue(CASH, r, "$name: amount $amount rounded to whole kyat", false)
             val date = parseDate(s.cell(r, 4))
             if (date == null) { issues += ImportIssue(CASH, r, "$name: date '${s.text(r, 4)}' is not valid – row skipped", true); continue }
-            val receipt = s.text(r, 6)
-            if (receipt.isNotEmpty() && !receipts.add(receipt.uppercase(Locale.US))) {
-                issues += ImportIssue(CASH, r, "Receipt $receipt is duplicated in the file – row skipped", true); continue
-            }
             out += ImportedPayment(
-                row = r, studentName = name, className = norm(s.text(r, 3)),
-                studentCode = codeCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() },
-                date = date, amount = Math.round(amount), receiptNo = receipt,
+                sheet = CASH, row = r,
+                ref = StudentRef(enrollCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }, codeCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }, name, norm(s.text(r, 3)).ifEmpty { null }),
+                academicYear = yearCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() },
+                date = date, amount = Math.round(amount), receiptNo = s.text(r, 6),
                 paymentFor = s.text(r, 7), remarks = s.text(r, 8),
-                receivedBy = byCol?.let { s.text(r, it) } ?: "Imported",
+                receivedBy = byCol?.let { s.text(r, it) }?.ifEmpty { null } ?: "Imported",
             )
         }
+        Fields.checkReceiptGroups(out, CASH, issues)
         return out
     }
 
-    private val DATE_FORMATS = listOf("d/M/yyyy", "d-M-yyyy", "yyyy-M-d", "d-MMM-yyyy", "d MMM yyyy", "d-MMM-yy", "M/d/yyyy", "d.M.yyyy")
-        .map { DateTimeFormatter.ofPattern(it, Locale.US) }
-
     /** Excel serial date (1900 system) or common text formats. */
-    fun parseDate(c: XCell?): LocalDate? {
-        if (c == null || c.isBlank) return null
-        c.number?.let { n -> return if (n in 1.0..2958465.0) LocalDate.of(1899, 12, 30).plusDays(n.toLong()) else null }
-        val t = c.text!!.trim().substringBefore('T').substringBefore(' ').let { if (it.length < 6) c.text.trim() else it }
-        for (f in DATE_FORMATS) {
-            try { return LocalDate.parse(t, f) } catch (_: Exception) {}
-            try { return LocalDate.parse(c.text.trim(), f) } catch (_: Exception) {}
-        }
-        return null
-    }
+    fun parseDate(c: XCell?): LocalDate? = Fields.date(c)
 }

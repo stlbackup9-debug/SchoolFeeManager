@@ -58,7 +58,7 @@ fun DashboardScreen(snap: AppSnapshot, onStudent: (Long) -> Unit, onReceipt: (Lo
     Column(Modifier.fillMaxSize()) {
         AppTopBar(snap.settings.schoolName)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Academic year from ${snap.yearStart.fmt()}  ·  Today ${snap.today.fmt()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Today ${snap.today.fmt()}  ·  ${d.activeEnrollments} active class enrollments  ·  ${d.payablesDue} payable item(s) due", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             StatRow(
                 { StatCard("Total Students Enrolled", d.totalStudents.toString(), Icons.Default.Groups, it) },
@@ -69,8 +69,8 @@ fun DashboardScreen(snap: AppSnapshot, onStudent: (Long) -> Unit, onReceipt: (Lo
                 { StatCard("Total Outstanding", Money.mmk(d.totalOutstanding), Icons.Default.AccountBalanceWallet, it, Red) },
             )
             StatRow(
-                { StatCard("Day Students", d.dayStudents.toString(), Icons.Default.WbSunny, it, Blue) },
-                { StatCard("Hostel Students", d.hostelStudents.toString(), Icons.Default.Bed, it, Blue) },
+                { StatCard("Day (enrollments)", d.dayStudents.toString(), Icons.Default.WbSunny, it, Blue) },
+                { StatCard("Hostel (enrollments)", d.hostelStudents.toString(), Icons.Default.Bed, it, Blue) },
             )
             StatRow(
                 { StatCard("Collected Today", Money.mmk(d.collectedToday), Icons.Default.Today, it, Green) },
@@ -94,7 +94,9 @@ fun DashboardScreen(snap: AppSnapshot, onStudent: (Long) -> Unit, onReceipt: (Lo
             SectionCard("Fee collection summary by class") {
                 val rows = d.classSummaries.filter { it.totalStudents > 0 || it.totalReceivable > 0 }
                 if (rows.isEmpty()) EmptyState("No students registered yet")
-                else DataTable(
+                else Text("Counted per class enrollment – a student in two classes appears in both.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (rows.isNotEmpty())
+                DataTable(
                     headers = listOf("Class", "Day", "Hostel", "Total", "Receivable", "Collected", "Balance"),
                     rows = rows.map { listOf(it.className, it.dayStudents.toLong(), it.hostelStudents.toLong(), it.totalStudents.toLong(), it.totalReceivable, it.collected, it.balance) },
                     totals = listOf("TOTAL", rows.sumOf { it.dayStudents }.toLong(), rows.sumOf { it.hostelStudents }.toLong(), rows.sumOf { it.totalStudents }.toLong(),
@@ -106,17 +108,16 @@ fun DashboardScreen(snap: AppSnapshot, onStudent: (Long) -> Unit, onReceipt: (Lo
 
             SectionCard("Recent cash collection") {
                 if (d.recentPayments.isEmpty()) EmptyState("No payments recorded yet")
-                val byId = snap.ledgers.associateBy { it.student.id }
                 d.recentPayments.forEachIndexed { i, p ->
                     if (i > 0) HorizontalDivider()
-                    val s = byId[p.studentId]?.student
+                    val r = snap.receiptById[p.receiptId]
                     Row(
-                        Modifier.fillMaxWidth().clickable { snap.receiptsByTx[p.id]?.let { onReceipt(it.id) } }.padding(vertical = 8.dp),
+                        Modifier.fillMaxWidth().clickable { onReceipt(p.receiptId) }.padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(s?.name ?: "?", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text("${p.receiptNo} · ${s?.className ?: ""} · ${p.date.fmt()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(r?.payerName ?: "?", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text("${p.receiptNo} · ${p.date.fmt()}${if ((r?.items?.size ?: 1) > 1) " · ${r!!.items.size} items" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(Money.format(p.amount), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Green)
                     }

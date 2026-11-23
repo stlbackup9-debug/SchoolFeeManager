@@ -1,13 +1,16 @@
-# Test Results – 22 Nov 2026
+# Test Results – 23 Nov 2026 (version 1.1)
 
 ## What was tested, and how
 
 | Layer | How | Result |
 |---|---|---|
 | Fee calculation, schedules, payment allocation, balances, dashboard, all 10 reports, receipts, password hashing | 15 JUnit tests in `app/src/test` (`BusinessRulesTest`) compiled with Kotlin 2.0.21 and run on JVM 21 | **15 / 15 pass** |
-| Excel import of the real `School_Fee_Management.xlsx`, export → re-import round trip, import validation / duplicate detection | 3 JUnit tests (`WorkbookTest`) | **3 / 3 pass** |
+| Excel import of the real `School_Fee_Management.xlsx`, export → re-import round trip (now incl. a student in two classes, a combined receipt, Enroll No., academic year, start date, period), import validation / duplicate detection | 3 JUnit tests (`WorkbookTest`) | **3 / 3 pass** |
 | App calculations vs the workbook's own formulas | 50 test students (every class × Day/Hostel × New/Old × Myanmar/Intl, discounts 0–33.3 %, both terms) + 60 cash rows written into a copy of the workbook, recalculated by LibreOffice, then compared cell by cell with the app engine (`tools/excel_equivalence`) | **550 / 550 cells identical** (with the two approved formula fixes) |
-| Android UI, Room database, printing, backup/restore | **Not run.** The build environment could not reach Google's Android repositories, so the APK could not be compiled or run on a device/emulator here. See README → *Building the APK*. | Pending – build in Android Studio |
+| Multiple classes per student, per-class start date / period, payables, combined receipts, Enroll No. search, Excel/CSV module import (all 4 modules, templates, CSV quoting, aliases), student matching | 6 JUnit tests (`MultiClassTest`) | **6 / 6 pass** |
+| Database migration v1 → v2 | `MigrationTest`: builds a v1 database from Room's exported schema with students, fees, schedules, receipts (incl. voided and a receipt-less transaction), runs the migration SQL on real SQLite, compares every table/column/key/index with a fresh v2 database and checks every migrated value | **1 / 1 pass** |
+| Build | `./gradlew test lintDebug assembleDebug assembleRelease` with Android SDK 35, AGP 8.7.3, Kotlin 2.0.21 | **Success** – no compiler warnings, 0 lint errors |
+| Android UI, Room repository on a device, printing, backup/restore | **Not run** – no Android emulator/device is available in the build environment (no hardware virtualisation). The repository code (payments, imports) compiles and was reviewed but is not covered by an automated test here. | Pending – try on a phone |
 
 ## Specification test scenarios
 
@@ -45,23 +48,9 @@
 
 ## Unit test log
 ```
-PASS BusinessRulesTest.passwordsAreSaltedAndVerified
-PASS BusinessRulesTest.paymentForTextMapsToScheduleLines
-PASS BusinessRulesTest.scenario10_fullPaymentAndSpillOver
-PASS BusinessRulesTest.scenario11_outstandingBalancesAndVoids
-PASS BusinessRulesTest.scenario12_receipt
-PASS BusinessRulesTest.scenario13_dailyCollectionReport
-PASS BusinessRulesTest.scenario1_newDayStudent
-PASS BusinessRulesTest.scenario2_newHostelStudent_includingKgHostelFix
-PASS BusinessRulesTest.scenario3_oldStudentHasNoEntranceFee
-PASS BusinessRulesTest.scenario4_bookTypeChange
-PASS BusinessRulesTest.scenario5_discounts
-PASS BusinessRulesTest.scenario6_everyClass
-PASS BusinessRulesTest.scenario7_threeInstallments
-PASS BusinessRulesTest.scenario8_monthlySchedule
-PASS BusinessRulesTest.scenario9_partialPayments
-PASS WorkbookTest.importValidationAndDuplicates
-PASS WorkbookTest.scenario14_importOriginalWorkbook
-PASS WorkbookTest.scenario15_exportAndReimportRoundTrip
-RESULT: 18 passed, 0 failed
+BusinessRulesTest  15 tests  0 failures
+MigrationTest       1 test   0 failures
+MultiClassTest      6 tests  0 failures
+WorkbookTest        3 tests  0 failures
+RESULT: 25 passed, 0 failed
 ```

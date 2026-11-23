@@ -81,12 +81,12 @@ fun SettingsScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onOpen
             }
             SectionCard("Fees") {
                 MenuRow(Icons.Default.PriceChange, "Fee rates", if (session.isAdmin) "Training, book, hostel, laundry, instrument and entrance fees" else "View current fee rates") { onOpen("rates") }
-                if (session.isAdmin) MenuRow(Icons.Default.Calculate, "Recalculate existing students", "Re-assess all active students with the current fee rates") { recalcAll = true }
+                if (session.isAdmin) MenuRow(Icons.Default.Calculate, "Recalculate existing classes", "Re-assess all active class enrollments with the current fee rates") { recalcAll = true }
             }
             if (session.isAdmin) SectionCard("Administration") {
-                MenuRow(Icons.Default.School, "School profile", "Name, address, receipt prefix, academic year start") { onOpen("school") }
+                MenuRow(Icons.Default.School, "School profile", "Name, address, receipt prefix, default academic year start") { onOpen("school") }
                 MenuRow(Icons.Default.ManageAccounts, "Users & roles", "Admin and Cashier accounts") { onOpen("users") }
-                MenuRow(Icons.Default.Storage, "Data: Excel import / export, backup & restore", "School_Fee_Management.xlsx and database backups") { onOpen("data") }
+                MenuRow(Icons.Default.Storage, "Data: import Excel / CSV, export, backup", "Students, classes, payments, fee rates · workbook · database backups") { onOpen("data") }
                 MenuRow(Icons.Default.History, "Activity log", "Audit trail of changes and payments") { onOpen("audit") }
             } else SectionCard("Data") {
                 MenuRow(Icons.Default.Storage, "Export to Excel", "Download the workbook") { onOpen("data") }
@@ -95,15 +95,16 @@ fun SettingsScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onOpen
                 MenuRow(Icons.Default.Lock, "Change password", null) { onOpen("password") }
                 MenuRow(Icons.AutoMirrored.Filled.Logout, "Log out", null) { logout = true }
             }
-            Text("School Fee Manager 1.0 · all amounts in MMK · works offline", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("School Fee Manager 1.1 · all amounts in MMK · works offline", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     if (recalcAll) {
-        val changed = snap.ledgers.filter { it.student.active && FeeCalculator.assess(snap.card, it.student) != it.fee }
+        val active = snap.ledgers.filter { it.student.active }.flatMap { it.activeEnrollments }
+        val changed = active.filter { FeeCalculator.assess(snap.card, it.enrollment) != it.fee }
         ConfirmDialog(
-            title = "Recalculate all active students?",
-            text = "${changed.size} of ${snap.ledgers.count { it.student.active }} active students would get a different fee with the current rates " +
-                "(total net change ${Money.mmk(changed.sumOf { FeeCalculator.assess(snap.card, it.student).netTotal - it.net })}). " +
+            title = "Recalculate all active classes?",
+            text = "${changed.size} of ${active.size} active class enrollments would get a different fee with the current rates " +
+                "(total net change ${Money.mmk(changed.sumOf { FeeCalculator.assess(snap.card, it.enrollment).netTotal - it.net })}). " +
                 "Their schedules are regenerated; payments are kept. This overwrites approved assessments.",
             confirmLabel = "Recalculate", destructive = true,
             onConfirm = { vm.recalculate(null) }, onDismiss = { recalcAll = false },
@@ -134,11 +135,17 @@ private class RateRow(r: ClassRate) {
     val hm = mutableStateOf(r.bookHostelMyanmar.toString())
     val hi = mutableStateOf(r.bookHostelIntl.toString())
     val hostel = mutableStateOf(r.hostelFee.toString())
+    val startMonth = mutableStateOf(r.startMonth)
+    val startDay = mutableStateOf(r.startDay.toString())
+    val period = mutableStateOf(r.periodMonths.toString())
     val original = r.className
 
     fun toRate(i: Int): ClassRate? {
         fun v(s: MutableState<String>) = s.value.toLongOrNull()
-        return ClassRate(name.value.trim().uppercase(), i, v(training) ?: return null, v(dm) ?: return null, v(di) ?: return null, v(hm) ?: return null, v(hi) ?: return null, v(hostel) ?: return null)
+        val day = startDay.value.toIntOrNull()?.takeIf { it in 1..31 } ?: return null
+        val p = period.value.toIntOrNull()?.takeIf { it in 1..24 } ?: return null
+        return ClassRate(name.value.trim().uppercase(), i, v(training) ?: return null, v(dm) ?: return null, v(di) ?: return null, v(hm) ?: return null, v(hi) ?: return null, v(hostel) ?: return null,
+            startMonth.value, day, p)
     }
 }
 
@@ -154,7 +161,7 @@ fun FeeRatesScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack
     var offerRecalc by remember { mutableStateOf(false) }
     var newClass by remember { mutableStateOf("") }
     val edit = session.isAdmin
-    val used = snap.ledgers.map { it.student.className }.toSet()
+    val used = snap.ledgers.flatMap { l -> l.enrollments.map { it.enrollment.className } }.toSet()
 
     val parsedRows = rows.mapIndexed { i, r -> r.toRate(i) }
     val newCard = if (parsedRows.any { it == null } || instrument.toLongOrNull() == null || laundry.toLongOrNull() == null || months.toIntOrNull() == null || entrance.toLongOrNull() == null) null
@@ -163,18 +170,17 @@ fun FeeRatesScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack
     Column(Modifier.fillMaxSize()) {
         AppTopBar("Fee Rates", onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("All amounts are MMK per year unless stated. Changes apply to NEW registrations; existing students keep their approved fees until you recalculate them.",
+            Text("All amounts are MMK per academic period unless stated. Each class has its own academic-year start and period (months); they are the defaults when a student is enrolled. Changes apply to NEW enrollments; existing ones keep their approved fees until you recalculate them.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             SectionCard("Fees for all students") {
                 MoneyField("B) Instrument fee (all students)", instrument, { instrument = it }, enabled = edit)
                 MoneyField("Entrance fee (new students only)", entrance, { entrance = it }, enabled = edit)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MoneyField("Laundry fee / month (hostel)", laundry, { laundry = it }, Modifier.weight(1.4f), enabled = edit)
-                    OutlinedTextField(months, { months = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Months/year") }, enabled = edit, singleLine = true,
+                    OutlinedTextField(months, { months = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Default months") }, enabled = edit, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                 }
-                val lm = (laundry.toLongOrNull() ?: 0) * (months.toLongOrNull() ?: 0)
-                Text("Annual laundry fee = ${Money.mmk(lm)}", style = MaterialTheme.typography.bodySmall)
+                Text("Laundry is charged for each month of a hostel enrollment's period (12 months = ${Money.mmk((laundry.toLongOrNull() ?: 0) * 12)}). Default months is used for new classes.", style = MaterialTheme.typography.bodySmall)
             }
             rows.forEachIndexed { i, r ->
                 SectionCard {
@@ -193,6 +199,14 @@ fun FeeRatesScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack
                         MoneyField("Hostel – Intl", r.hi.value, { r.hi.value = it }, Modifier.weight(1f), enabled = edit)
                     }
                     MoneyField("D) Hostel fee (hostel students)", r.hostel.value, { r.hostel.value = it }, enabled = edit)
+                    Text("Academic year of this class", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Dropdown("Start month", (1..12).toList(), r.startMonth.value, { java.time.Month.of(it).getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.US) }, { r.startMonth.value = it }, Modifier.weight(1.2f), enabled = edit)
+                        OutlinedTextField(r.startDay.value, { r.startDay.value = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Day") }, enabled = edit, singleLine = true,
+                            isError = r.startDay.value.toIntOrNull() !in 1..31, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(0.8f))
+                        OutlinedTextField(r.period.value, { r.period.value = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Months") }, enabled = edit, singleLine = true,
+                            isError = r.period.value.toIntOrNull() !in 1..24, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(0.8f))
+                    }
                 }
             }
             if (edit) {
@@ -201,25 +215,26 @@ fun FeeRatesScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack
                     TextButton(onClick = {
                         val n = newClass.trim().uppercase()
                         if (n.isNotEmpty() && rows.none { it.name.value.trim().equals(n, true) }) {
-                            rows.add(RateRow(ClassRate(n, rows.size, 0, 0, 0, 0, 0, 0))); newClass = ""
+                            val ys = snap.yearStart
+                            rows.add(RateRow(ClassRate(n, rows.size, 0, 0, 0, 0, 0, 0, ys.monthValue, ys.dayOfMonth, months.toIntOrNull()?.takeIf { it in 1..24 } ?: 12))); newClass = ""
                         }
                     }) { Icon(Icons.Default.Add, contentDescription = null); Text("Add class") }
                 }
                 Button(onClick = { confirm = true }, enabled = newCard != null && newCard != card, modifier = Modifier.fillMaxWidth()) { Text("Save fee rates") }
-                if (newCard == null) Text("Every amount must be a whole number.", color = Red, style = MaterialTheme.typography.bodySmall)
+                if (newCard == null) Text("Every amount must be a whole number; start day 1–31; months 1–24.", color = Red, style = MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(24.dp))
         }
     }
     if (confirm && newCard != null) ConfirmDialog(
         title = "Save new fee rates?",
-        text = "New registrations will use these rates. Existing students' approved fee assessments are NOT changed.",
+        text = "New class enrollments will use these rates. Existing enrollments' approved fee assessments are NOT changed.",
         confirmLabel = "Save",
         onConfirm = { vm.saveRates(newCard) { offerRecalc = true } }, onDismiss = { confirm = false },
     )
     if (offerRecalc) ConfirmDialog(
         title = "Recalculate existing students?",
-        text = "Rates are saved. Do you also want to re-assess all active students with the new rates now? You can do this later from Settings.",
+        text = "Rates are saved. Do you also want to re-assess all active class enrollments with the new rates now? You can do this later from Settings.",
         confirmLabel = "Recalculate now", destructive = true,
         onConfirm = { vm.recalculate(null) }, onDismiss = { offerRecalc = false },
     )
@@ -242,8 +257,8 @@ fun SchoolProfileScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, o
             OutlinedTextField(phone, { phone = it }, label = { Text("Phone") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(prefix, { prefix = it.filter { c -> c.isLetterOrDigit() }.take(8).uppercase() }, label = { Text("Receipt number prefix") }, singleLine = true,
                 supportingText = { Text("Receipts look like $prefix-${snap.today.year}-000123") }, modifier = Modifier.fillMaxWidth())
-            DateField("Academic year start", start, { if (it != null) start = it })
-            Text("3-Inst due dates: start, +4 months, +8 months. Monthly: one per month from the start. Changing this date moves all due dates; amounts and payments are not changed.",
+            DateField("Default academic year start", start, { if (it != null) start = it })
+            Text("Used as the start for classes you add later. Each class has its own start date and period (Settings → Fee rates), and each enrollment keeps its own dates. 3-Inst: due at start, +⅓ and +⅔ of the period. Monthly: one per month.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { vm.saveSchool(name, address, phone, prefix, start, onBack) }, enabled = session.isAdmin && name.isNotBlank() && prefix.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Save") }
         }

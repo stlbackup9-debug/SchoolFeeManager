@@ -22,6 +22,10 @@ data class FeeRateEntity(
     val bookHostelMyanmar: Long,
     val bookHostelIntl: Long,
     val hostelFee: Long,
+    /** Default academic-year start (month, day) and period (months) for enrollments in this class. */
+    val startMonth: Int = 6,
+    val startDay: Int = 1,
+    val periodMonths: Int = 12,
 )
 
 /** Single-row table: school profile, global fee rates and number sequences. */
@@ -42,17 +46,42 @@ data class SchoolSettingsEntity(
     val ratesUpdatedAt: Long = 0,
 )
 
+/** A person. Class, fees and schedule are per [EnrollmentEntity]. */
 @Entity(
     tableName = "students",
-    indices = [Index(value = ["code"], unique = true), Index(value = ["className"]), Index(value = ["nameKey", "className"])],
+    indices = [Index(value = ["code"], unique = true), Index(value = ["enrollNo"], unique = true), Index(value = ["nameKey"])],
 )
 data class StudentEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** automatic Student ID, STU-0001 */
     val code: String,
+    /** Enroll number entered by the school; NULL when not given (unique when given) */
+    val enrollNo: String?,
     val name: String,
     /** lower-cased trimmed name, used for duplicate checks */
     val nameKey: String,
+    val remarks: String,
+    val active: Boolean = true,
+    val registeredOn: Long,
+    val updatedAt: Long,
+)
+
+/**
+ * One class a student attends in one academic year, with its own start date and period.
+ * The fee columns are the APPROVED assessment snapshot – not changed when fee rates change.
+ */
+@Entity(
+    tableName = "enrollments",
+    foreignKeys = [ForeignKey(entity = StudentEntity::class, parentColumns = ["id"], childColumns = ["studentId"], onDelete = ForeignKey.RESTRICT)],
+    indices = [Index(value = ["studentId", "className", "academicYear"], unique = true), Index(value = ["className"])],
+)
+data class EnrollmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val studentId: Long,
     val className: String,
+    val academicYear: String,
+    val startDate: Long,
+    val periodMonths: Int,
     val studentType: String,
     val studentStatus: String,
     val bookType: String,
@@ -60,17 +89,8 @@ data class StudentEntity(
     val discountBp: Int,
     val remarks: String,
     val active: Boolean = true,
-    val registeredOn: Long,
+    val createdOn: Long,
     val updatedAt: Long,
-)
-
-/** The approved fee assessment (one per student). Not changed when fee rates change. */
-@Entity(
-    tableName = "student_fees",
-    foreignKeys = [ForeignKey(entity = StudentEntity::class, parentColumns = ["id"], childColumns = ["studentId"], onDelete = ForeignKey.RESTRICT)],
-)
-data class StudentFeeEntity(
-    @PrimaryKey val studentId: Long,
     val trainingFee: Long,
     val instrumentFee: Long,
     val bookFee: Long,
@@ -78,7 +98,6 @@ data class StudentFeeEntity(
     val laundryFee: Long,
     val entranceFee: Long,
     val grossTotal: Long,
-    val discountBp: Int,
     val discountAmount: Long,
     val netTotal: Long,
     val assessedAt: Long,
@@ -86,27 +105,57 @@ data class StudentFeeEntity(
 
 @Entity(
     tableName = "payment_schedule",
-    foreignKeys = [ForeignKey(entity = StudentEntity::class, parentColumns = ["id"], childColumns = ["studentId"], onDelete = ForeignKey.RESTRICT)],
-    indices = [Index(value = ["studentId", "seq"], unique = true)],
+    foreignKeys = [ForeignKey(entity = EnrollmentEntity::class, parentColumns = ["id"], childColumns = ["enrollmentId"], onDelete = ForeignKey.RESTRICT)],
+    indices = [Index(value = ["enrollmentId", "seq"], unique = true)],
 )
 data class PaymentScheduleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val studentId: Long,
+    val enrollmentId: Long,
     val seq: Int,
     val label: String,
     val dueDate: Long,
     val amount: Long,
 )
 
-/** Cash collection register. Rows are never deleted; a mistaken entry is voided by an admin. */
+/** A receipt. It holds one or more [PaymentTransactionEntity] lines (several = combined receipt). */
+@Entity(
+    tableName = "receipts",
+    indices = [Index(value = ["receiptNo"], unique = true), Index(value = ["date"])],
+)
+data class ReceiptEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val receiptNo: String,
+    val date: Long,
+    /** student name(s) printed on the receipt */
+    val payerName: String,
+    val issuedAt: Long,
+    /** sum of the balances of the students on this receipt, before / after it */
+    val previousBalance: Long,
+    val remainingBalance: Long,
+    val receivedBy: String,
+    val remarks: String,
+    val printCount: Int = 0,
+    val voided: Boolean = false,
+    val voidReason: String = "",
+    val voidedBy: String = "",
+    val imported: Boolean = false,
+)
+
+/** Cash collection register line. Rows are never deleted; a mistaken receipt is voided by an admin. */
 @Entity(
     tableName = "payment_transactions",
-    foreignKeys = [ForeignKey(entity = StudentEntity::class, parentColumns = ["id"], childColumns = ["studentId"], onDelete = ForeignKey.RESTRICT)],
-    indices = [Index(value = ["studentId"]), Index(value = ["date"])],
+    foreignKeys = [
+        ForeignKey(entity = ReceiptEntity::class, parentColumns = ["id"], childColumns = ["receiptId"], onDelete = ForeignKey.RESTRICT),
+        ForeignKey(entity = StudentEntity::class, parentColumns = ["id"], childColumns = ["studentId"], onDelete = ForeignKey.RESTRICT),
+        ForeignKey(entity = EnrollmentEntity::class, parentColumns = ["id"], childColumns = ["enrollmentId"], onDelete = ForeignKey.RESTRICT),
+    ],
+    indices = [Index(value = ["receiptId"]), Index(value = ["studentId"]), Index(value = ["enrollmentId"]), Index(value = ["date"])],
 )
 data class PaymentTransactionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val receiptId: Long,
     val studentId: Long,
+    val enrollmentId: Long,
     val date: Long,
     val amount: Long,
     val scheduleSeq: Int?,
@@ -118,22 +167,6 @@ data class PaymentTransactionEntity(
     val voidReason: String = "",
     val voidedBy: String = "",
     val imported: Boolean = false,
-)
-
-@Entity(
-    tableName = "receipts",
-    foreignKeys = [ForeignKey(entity = PaymentTransactionEntity::class, parentColumns = ["id"], childColumns = ["transactionId"], onDelete = ForeignKey.RESTRICT)],
-    indices = [Index(value = ["receiptNo"], unique = true), Index(value = ["transactionId"], unique = true)],
-)
-data class ReceiptEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val receiptNo: String,
-    val transactionId: Long,
-    val issuedAt: Long,
-    val previousBalance: Long,
-    val remainingBalance: Long,
-    val receivedBy: String,
-    val printCount: Int = 0,
 )
 
 @Entity(tableName = "users", indices = [Index(value = ["username"], unique = true)])

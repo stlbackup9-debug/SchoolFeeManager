@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.school.feemanager.FeeApp
 import com.school.feemanager.data.AppSnapshot
 import com.school.feemanager.data.AuditLogEntity
+import com.school.feemanager.data.EnrollmentForm
 import com.school.feemanager.data.FeeException
 import com.school.feemanager.data.ImportSummary
 import com.school.feemanager.data.PaymentRequest
@@ -17,6 +18,9 @@ import com.school.feemanager.data.StudentForm
 import com.school.feemanager.domain.FeeRateCard
 import com.school.feemanager.domain.ReportTable
 import com.school.feemanager.domain.Role
+import com.school.feemanager.io.ImportBundle
+import com.school.feemanager.io.ImportModule
+import com.school.feemanager.io.ModuleImporter
 import com.school.feemanager.io.WorkbookExporter
 import com.school.feemanager.io.WorkbookImport
 import com.school.feemanager.io.WorkbookImporter
@@ -124,8 +128,8 @@ class AppViewModel(private val app: FeeApp) : ViewModel() {
     fun setUserRole(userId: Long, role: Role) = action { repo.setUserRole(userId, role, admin()) }
 
     // -------------------------------------------------------- students
-    fun saveStudent(id: Long?, form: StudentForm, onSaved: (Long) -> Unit) = action(if (id == null) "Student registered" else "Student updated") {
-        val newId = repo.saveStudent(id, form, admin())
+    fun saveStudent(id: Long?, form: StudentForm, firstEnrollment: EnrollmentForm?, onSaved: (Long) -> Unit) = action(if (id == null) "Student registered" else "Student updated") {
+        val newId = repo.saveStudent(id, form, firstEnrollment, admin())
         onSaved(newId)
     }
 
@@ -133,24 +137,28 @@ class AppViewModel(private val app: FeeApp) : ViewModel() {
         repo.setStudentActive(id, active, admin())
     }
 
-    fun promote(id: Long, newClass: String, markOld: Boolean, recalculate: Boolean) = action("Student moved to $newClass") {
-        repo.promote(id, newClass, markOld, recalculate, admin())
+    fun saveEnrollment(id: Long?, studentId: Long, form: EnrollmentForm, onSaved: (Long) -> Unit) = action(if (id == null) "Class added" else "Class updated") {
+        onSaved(repo.saveEnrollment(id, studentId, form, admin()))
     }
 
-    fun recalculate(ids: List<Long>?) = action {
-        val n = repo.recalculate(ids, admin())
-        _message.value = "$n student(s) re-assessed with current fee rates"
+    fun setEnrollmentActive(id: Long, active: Boolean) = action(if (active) "Class reactivated" else "Class deactivated") {
+        repo.setEnrollmentActive(id, active, admin())
+    }
+
+    fun recalculate(enrollmentIds: List<Long>?) = action {
+        val n = repo.recalculate(enrollmentIds, admin())
+        _message.value = "$n class enrollment(s) re-assessed with current fee rates"
     }
 
     // -------------------------------------------------------- payments
-    fun recordPayment(req: PaymentRequest, onDone: (Long) -> Unit) = action("Payment saved") {
+    fun recordPayment(req: PaymentRequest, onDone: (Long) -> Unit) = action(if (req.items.size > 1) "Payment saved – combined receipt" else "Payment saved") {
         val rid = repo.recordPayment(req, user())
         onDone(rid)
     }
 
-    fun voidPayment(txId: Long, reason: String) = action("Payment voided") { repo.voidPayment(txId, reason, admin()) }
+    fun voidReceipt(receiptId: Long, reason: String) = action("Receipt voided") { repo.voidReceipt(receiptId, reason, admin()) }
 
-    fun markPrinted(receiptId: Long) = viewModelScope.launch { try { repo.markPrinted(receiptId) } catch (_: Exception) {} }
+    fun markPrinted(receiptIds: List<Long>) = viewModelScope.launch { try { repo.markPrinted(receiptIds) } catch (_: Exception) {} }
 
     // -------------------------------------------------------- settings
     fun saveRates(card: FeeRateCard, onDone: () -> Unit) = action("Fee rates saved. New registrations will use them.") {
@@ -162,18 +170,46 @@ class AppViewModel(private val app: FeeApp) : ViewModel() {
     }
 
     // ------------------------------------------------------ import/export
-    fun parseImport(uri: Uri, onParsed: (WorkbookImport) -> Unit) = action {
+    private suspend fun readBytes(uri: Uri): ByteArray = withContext(Dispatchers.IO) {
+        app.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw FeeException("Cannot open the selected file")
+    }
+
+    fun parseImport(uri: Uri, onParsed: (ImportBundle) -> Unit) = action {
         admin()
         val card = snapshot.value?.card ?: FeeRateCard.workbookDefaults()
-        val imp = withContext(Dispatchers.IO) {
-            app.contentResolver.openInputStream(uri)?.use { WorkbookImporter.read(it, card) } ?: throw FeeException("Cannot open the selected file")
+        val bytes = readBytes(uri)
+        val imp = withContext(Dispatchers.Default) {
+            try { WorkbookImporter.read(bytes.inputStream(), card) } catch (e: Exception) { throw FeeException("Not a valid .xlsx workbook: ${e.message}") }
         }
         onParsed(imp)
     }
 
-    fun applyImport(imp: WorkbookImport, updateRates: Boolean, onDone: (ImportSummary) -> Unit) = action {
-        val r = repo.applyImport(imp, updateRates, admin())
+    fun parseModuleImport(module: ImportModule, uri: Uri, onParsed: (ImportBundle) -> Unit) = action {
+        admin()
+        val card = snapshot.value?.card ?: FeeRateCard.workbookDefaults()
+        val bytes = readBytes(uri)
+        val imp = withContext(Dispatchers.Default) {
+            try { ModuleImporter.read(module, bytes, card) } catch (e: IllegalArgumentException) { throw FeeException(e.message ?: "File not understood") }
+            catch (e: Exception) { throw FeeException("Cannot read the file (use .xlsx or .csv): ${e.message}") }
+        }
+        onParsed(imp)
+    }
+
+    /** Runs the import without saving anything and reports what WOULD happen. */
+    fun previewImport(imp: ImportBundle, updateRates: Boolean, onDone: (ImportSummary) -> Unit) = action {
+        onDone(repo.applyImport(imp, updateRates, dryRun = true, by = admin()))
+    }
+
+    fun applyImport(imp: ImportBundle, updateRates: Boolean, onDone: (ImportSummary) -> Unit) = action {
+        val r = repo.applyImport(imp, updateRates, dryRun = false, by = admin())
         onDone(r)
+    }
+
+    fun writeTemplate(uri: Uri, module: ImportModule, csv: Boolean) = action("Template saved") {
+        withContext(Dispatchers.IO) {
+            val bytes = if (csv) ModuleImporter.templateCsv(module) else ModuleImporter.templateXlsx(module)
+            app.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: throw FeeException("Cannot write the file")
+        }
     }
 
     fun exportWorkbook(uri: Uri) = action("Workbook exported") {

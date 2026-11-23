@@ -47,6 +47,9 @@ enum class BookType(val label: String) {
 enum class PaymentTerm(val label: String, val parts: Int) {
     THREE_INST("3-Inst", 3), MONTHLY("Monthly", 12);
 
+    /** Number of schedule lines for an enrollment whose period is [periodMonths] months. */
+    fun partsFor(periodMonths: Int): Int = if (this == THREE_INST) 3 else periodMonths.coerceIn(1, 24)
+
     companion object {
         fun parse(s: String?): PaymentTerm? {
             val t = s?.trim()?.lowercase()?.replace(" ", "")?.replace("_", "-") ?: return null
@@ -85,7 +88,29 @@ data class ClassRate(
     val bookHostelMyanmar: Long,
     val bookHostelIntl: Long,
     val hostelFee: Long,
-)
+    /** Default academic-year start (month/day) and period for enrollments in this class. */
+    val startMonth: Int = 6,
+    val startDay: Int = 1,
+    val periodMonths: Int = 12,
+) {
+    /** The start date of the academic year (for this class) that contains [today]. */
+    fun defaultStart(today: LocalDate): LocalDate {
+        val thisYear = startIn(today.year)
+        return if (thisYear.isAfter(today)) startIn(today.year - 1) else thisYear
+    }
+
+    /** This class's start date in calendar year [year]. */
+    fun startIn(year: Int): LocalDate {
+        val ym = java.time.YearMonth.of(year, startMonth.coerceIn(1, 12))
+        return ym.atDay(startDay.coerceIn(1, ym.lengthOfMonth()))
+    }
+}
+
+/** "2026-2027" for a June 2026 start; "2026" for a January start with a period of 12 months or less. */
+fun academicYearLabel(start: LocalDate, periodMonths: Int): String {
+    val end = start.plusMonths(periodMonths.toLong()).minusDays(1)
+    return if (end.year == start.year) "${start.year}" else "${start.year}-${end.year}"
+}
 
 /** Complete rate card = Fee_Rates worksheet. */
 data class FeeRateCard(
@@ -141,11 +166,29 @@ data class FeeAssessment(
     }
 }
 
+/** A person. Class-related data lives in [EnrollmentRecord]; a student can have several. */
 data class StudentRecord(
     val id: Long,
     val code: String,
+    /** Enroll number typed by the school (optional, unique when given). */
+    val enrollNo: String,
     val name: String,
+    val remarks: String,
+    val active: Boolean,
+    val registeredOn: LocalDate,
+) {
+    /** "EN-15 · STU-0003" or just the code. */
+    val idText: String get() = if (enrollNo.isBlank()) code else "$enrollNo · $code"
+}
+
+/** One class a student attends, with its own academic year, start date and period. */
+data class EnrollmentRecord(
+    val id: Long,
+    val studentId: Long,
     val className: String,
+    val academicYear: String,
+    val startDate: LocalDate,
+    val periodMonths: Int,
     val type: StudentType,
     val status: StudentStatus,
     val bookType: BookType,
@@ -153,8 +196,10 @@ data class StudentRecord(
     val discountBp: Int,
     val remarks: String,
     val active: Boolean,
-    val registeredOn: LocalDate,
-)
+    val createdOn: LocalDate,
+) {
+    val title: String get() = "$className · $academicYear"
+}
 
 data class ScheduleLine(
     val seq: Int,
@@ -163,6 +208,7 @@ data class ScheduleLine(
     val amount: Long,
 )
 
+/** One line of a receipt: money applied to one enrollment (and optionally one schedule line). */
 data class PaymentRecord(
     val id: Long,
     val studentId: Long,
@@ -175,7 +221,29 @@ data class PaymentRecord(
     val receivedBy: String,
     val voided: Boolean = false,
     val createdAtMillis: Long = 0,
+    val enrollmentId: Long = studentId,
+    val receiptId: Long = id,
 )
+
+/** A receipt; [items] holds one or more payment lines (a combined receipt has several). */
+data class ReceiptRecord(
+    val id: Long,
+    val receiptNo: String,
+    val date: LocalDate,
+    val payerName: String,
+    val issuedAtMillis: Long,
+    val previousBalance: Long,
+    val remainingBalance: Long,
+    val receivedBy: String,
+    val remarks: String,
+    val printCount: Int,
+    val voided: Boolean,
+    val voidReason: String,
+    val items: List<PaymentRecord>,
+) {
+    val total: Long get() = items.sumOf { it.amount }
+    val studentIds: List<Long> get() = items.map { it.studentId }.distinct()
+}
 
 data class LineStatus(
     val line: ScheduleLine,
@@ -185,8 +253,9 @@ data class LineStatus(
     val remaining: Long get() = (line.amount - paid).coerceAtLeast(0)
 }
 
-data class StudentLedger(
-    val student: StudentRecord,
+/** Fees, schedule and payments of one enrollment. */
+data class EnrollmentLedger(
+    val enrollment: EnrollmentRecord,
     val fee: FeeAssessment,
     val lines: List<LineStatus>,
     val paid: Long,
@@ -195,15 +264,50 @@ data class StudentLedger(
     val net: Long get() = fee.netTotal
     val balance: Long get() = net - paid
     val overdue: Boolean get() = lines.any { it.status == PayStatus.OVERDUE }
+    val paymentState: PayStatus get() = payState(balance, paid)
+    val status: PayStatus get() = if (paymentState != PayStatus.PAID && overdue) PayStatus.OVERDUE else paymentState
+}
+
+/** A student with all enrollments. Totals are the sum over every enrollment. */
+data class StudentLedger(
+    val student: StudentRecord,
+    val enrollments: List<EnrollmentLedger>,
+) {
+    val net: Long get() = enrollments.sumOf { it.net }
+    val paid: Long get() = enrollments.sumOf { it.paid }
+    val balance: Long get() = net - paid
+    val overdue: Boolean get() = enrollments.any { it.overdue }
+    val payments: List<PaymentRecord> get() = enrollments.flatMap { it.payments }.sortedByDescending { it.date }
+    val activeEnrollments: List<EnrollmentLedger> get() = enrollments.filter { it.enrollment.active }
+
+    /** Class names of the active enrollments, e.g. "G-3, G-5". */
+    val classesText: String
+        get() = (activeEnrollments.ifEmpty { enrollments }).joinToString(", ") { it.enrollment.className }.ifEmpty { "–" }
+
+    fun enrollment(id: Long): EnrollmentLedger? = enrollments.firstOrNull { it.enrollment.id == id }
 
     /** Unpaid / Partially Paid / Fully Paid – ignores due dates. */
-    val paymentState: PayStatus
-        get() = when {
-            balance <= 0 -> PayStatus.PAID
-            paid <= 0 -> PayStatus.UNPAID
-            else -> PayStatus.PARTIAL
-        }
+    val paymentState: PayStatus get() = payState(balance, paid)
 
     /** Display status: Overdue wins over Unpaid / Partially Paid. */
     val status: PayStatus get() = if (paymentState != PayStatus.PAID && overdue) PayStatus.OVERDUE else paymentState
+
+    /** Every schedule line that still has money to pay, across all classes, earliest due first. */
+    val payables: List<Payable>
+        get() = enrollments.filter { it.enrollment.active }.flatMap { e -> e.lines.filter { it.remaining > 0 }.map { Payable(student, e, it) } }
+            .sortedWith(compareBy<Payable> { it.line.line.dueDate }.thenBy { it.enrollment.enrollment.id }.thenBy { it.line.line.seq })
+}
+
+/** One outstanding installment / month of one enrollment. */
+data class Payable(val student: StudentRecord, val enrollment: EnrollmentLedger, val line: LineStatus) {
+    val key: String get() = "${enrollment.enrollment.id}:${line.line.seq}"
+    val remaining: Long get() = line.remaining
+    val description: String
+        get() = "${enrollment.enrollment.className} ${enrollment.enrollment.academicYear} – ${ScheduleCalculator.longLabelFor(enrollment.enrollment.term, line.line.seq)}"
+}
+
+private fun payState(balance: Long, paid: Long): PayStatus = when {
+    balance <= 0 -> PayStatus.PAID
+    paid <= 0 -> PayStatus.UNPAID
+    else -> PayStatus.PARTIAL
 }

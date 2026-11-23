@@ -7,7 +7,7 @@ package com.school.feemanager.domain
  *   H Instrument = fixed instrument fee (all students)            [Excel cell ref fixed: G7 -> G6]
  *   I Book       = class × (Day|Hostel) × (Myanmar|International)
  *   J Hostel     = hostel fee by class, Hostel students only       [Excel range fixed: A23:B35 -> A22:B34, so KG is found]
- *   K Laundry    = laundry/month × months/year, Hostel only
+ *   K Laundry    = laundry/month × months (the enrollment's period, default months/year), Hostel only
  *   L Entrance   = entrance fee, New students only
  *   M Gross      = G+H+I+J+K+L
  *   O Discount   = M × N
@@ -27,6 +27,7 @@ object FeeCalculator {
         status: StudentStatus,
         bookType: BookType,
         discountBp: Int,
+        periodMonths: Int = card.monthsPerYear,
     ): FeeAssessment {
         if (className.isBlank()) return FeeAssessment.ZERO.copy(discountBp = discountBp)
         val r = card.rateFor(className)
@@ -39,7 +40,7 @@ object FeeCalculator {
             else -> r.bookHostelIntl
         }
         val hostel = if (type == StudentType.HOSTEL) r?.hostelFee ?: 0 else 0
-        val laundry = if (type == StudentType.HOSTEL) card.laundryPerMonth * card.monthsPerYear else 0
+        val laundry = if (type == StudentType.HOSTEL) card.laundryPerMonth * periodMonths else 0
         val entrance = if (status == StudentStatus.NEW) card.entranceFee else 0
         return FeeAssessment(
             trainingFee = training,
@@ -52,6 +53,6 @@ object FeeCalculator {
         )
     }
 
-    fun assess(card: FeeRateCard, s: StudentRecord): FeeAssessment =
-        assess(card, s.className, s.type, s.status, s.bookType, s.discountBp)
+    fun assess(card: FeeRateCard, e: EnrollmentRecord): FeeAssessment =
+        assess(card, e.className, e.type, e.status, e.bookType, e.discountBp, e.periodMonths)
 }

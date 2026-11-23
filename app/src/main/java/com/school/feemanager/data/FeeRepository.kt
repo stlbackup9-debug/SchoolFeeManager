@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.withTransaction
 import com.school.feemanager.domain.BookType
+import com.school.feemanager.domain.ClassRate
 import com.school.feemanager.domain.DashboardSummary
 import com.school.feemanager.domain.FeeAssessment
 import com.school.feemanager.domain.FeeCalculator
@@ -13,15 +14,21 @@ import com.school.feemanager.domain.LedgerInput
 import com.school.feemanager.domain.PasswordHasher
 import com.school.feemanager.domain.PaymentRecord
 import com.school.feemanager.domain.PaymentTerm
+import com.school.feemanager.domain.ReceiptRecord
 import com.school.feemanager.domain.Role
 import com.school.feemanager.domain.ScheduleCalculator
 import com.school.feemanager.domain.StudentLedger
 import com.school.feemanager.domain.StudentStatus
 import com.school.feemanager.domain.StudentType
+import com.school.feemanager.domain.EnrollmentLedger
+import com.school.feemanager.domain.academicYearLabel
+import com.school.feemanager.io.ImportBundle
 import com.school.feemanager.io.ImportPlanner
+import com.school.feemanager.io.ImportedEnrollment
+import com.school.feemanager.io.ImportedPayment
 import com.school.feemanager.io.MatchCandidate
 import com.school.feemanager.io.MatchResult
-import com.school.feemanager.io.WorkbookImport
+import com.school.feemanager.io.StudentRef
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -40,18 +47,34 @@ data class AppSnapshot(
     val card: FeeRateCard,
     val ledgers: List<StudentLedger>,
     val payments: List<PaymentRecord>,
-    val receiptsByTx: Map<Long, ReceiptEntity>,
+    val receipts: List<ReceiptRecord>,
     val dashboard: DashboardSummary,
     val users: List<UserEntity>,
     val today: LocalDate,
 ) {
     val yearStart: LocalDate get() = LocalDate.ofEpochDay(settings.academicYearStart)
-    fun ledger(studentId: Long): StudentLedger? = ledgers.firstOrNull { it.student.id == studentId }
+    private val byStudent: Map<Long, StudentLedger> by lazy { ledgers.associateBy { it.student.id } }
+    val receiptById: Map<Long, ReceiptRecord> by lazy { receipts.associateBy { it.id } }
+    private val byEnrollment: Map<Long, Pair<StudentLedger, EnrollmentLedger>> by lazy {
+        ledgers.flatMap { l -> l.enrollments.map { it.enrollment.id to (l to it) } }.toMap()
+    }
+
+    fun ledger(studentId: Long): StudentLedger? = byStudent[studentId]
+    fun enrollment(enrollmentId: Long): Pair<StudentLedger, EnrollmentLedger>? = byEnrollment[enrollmentId]
 }
 
+/** Identity of a student. Class data is entered per enrollment ([EnrollmentForm]). */
 data class StudentForm(
+    val enrollNo: String,
     val name: String,
+    val remarks: String,
+)
+
+data class EnrollmentForm(
     val className: String,
+    val academicYear: String,
+    val startDate: LocalDate,
+    val periodMonths: Int,
     val type: StudentType,
     val status: StudentStatus,
     val bookType: BookType,
@@ -60,31 +83,48 @@ data class StudentForm(
     val remarks: String,
 )
 
-data class PaymentRequest(
+/** One line of a payment: money for one enrollment, optionally one schedule line. */
+data class PayItem(
     val studentId: Long,
-    val date: LocalDate,
-    val amount: Long,
+    val enrollmentId: Long,
     val scheduleSeq: Int?,
+    val amount: Long,
     val paymentFor: String,
+)
+
+/** A payment with one or more lines – saved as ONE receipt (a combined receipt when there are several lines). */
+data class PaymentRequest(
+    val date: LocalDate,
+    val items: List<PayItem>,
     val remarks: String,
 )
 
 data class ImportSummary(
+    val dryRun: Boolean,
     val ratesUpdated: Boolean,
+    val classesAdded: Int,
+    val classesUpdated: Int,
     val studentsImported: Int,
-    val studentsSkippedDuplicate: Int,
+    val studentsExisting: Int,
+    val enrollmentsImported: Int,
+    val enrollmentsSkippedDuplicate: Int,
+    val receiptsImported: Int,
     val paymentsImported: Int,
     val paymentsSkippedDuplicate: Int,
     val problems: List<String>,
-)
+) {
+    val studentsSkippedDuplicate: Int get() = studentsExisting
+}
 
 class FeeException(message: String) : Exception(message)
+
+private class DryRunRollback(val summary: ImportSummary) : Exception()
 
 class FeeRepository(private val context: Context, private val db: AppDatabase) {
     private val settingsDao = db.settingsDao()
     private val rateDao = db.feeRateDao()
     private val studentDao = db.studentDao()
-    private val feeDao = db.studentFeeDao()
+    private val enrollmentDao = db.enrollmentDao()
     private val scheduleDao = db.scheduleDao()
     private val txDao = db.transactionDao()
     private val receiptDao = db.receiptDao()
@@ -106,7 +146,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
                     ratesUpdatedAt = System.currentTimeMillis(),
                 ),
             )
-            rateDao.insertAll(defaults.classes.map { it.toEntity() })
+            rateDao.insertAll(defaults.classes.map { it.copy(startMonth = start.monthValue, startDay = start.dayOfMonth, periodMonths = defaults.monthsPerYear).toEntity() })
         }
         if (userDao.count() == 0) {
             val salt = PasswordHasher.newSalt()
@@ -116,26 +156,28 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
 
     // --------------------------------------------------------------- snapshot
     fun snapshot(): Flow<AppSnapshot> {
-        val base = combine(settingsDao.observe().filterNotNull(), rateDao.observeAll(), studentDao.observeAll(), feeDao.observeAll(), scheduleDao.observeAll()) { s, r, st, f, sc ->
-            Base(s, r, st, f, sc)
+        val base = combine(settingsDao.observe().filterNotNull(), rateDao.observeAll(), studentDao.observeAll(), enrollmentDao.observeAll(), scheduleDao.observeAll()) { s, r, st, en, sc ->
+            Base(s, r, st, en, sc)
         }
         return combine(base, txDao.observeAll(), receiptDao.observeAll(), userDao.observeAll()) { b, tx, rc, users ->
             val today = LocalDate.now()
             val card = rateCardOf(b.settings, b.rates)
-            val receiptsByTx = rc.associateBy { it.transactionId }
-            val payments = tx.map { it.toDomain(receiptsByTx[it.id]?.receiptNo ?: "") }
-            val students = b.students.map { it.toDomain() }
+            val receiptNo = rc.associate { it.id to it.receiptNo }
+            val payments = tx.map { it.toDomain(receiptNo[it.receiptId] ?: "") }
+            val itemsByReceipt = payments.groupBy { it.receiptId }
+            val receipts = rc.map { it.toDomain(itemsByReceipt[it.id].orEmpty().sortedBy { p -> p.id }) }
             val ledgers = Ledger.build(
                 LedgerInput(
-                    students = students,
-                    fees = b.fees.associate { it.studentId to it.toDomain() },
-                    schedules = b.schedules.groupBy({ it.studentId }, { it.toDomain() }),
+                    students = b.students.map { it.toDomain() },
+                    enrollments = b.enrollments.map { it.toDomain() },
+                    fees = b.enrollments.associate { it.id to it.fee() },
+                    schedules = b.schedules.groupBy({ it.enrollmentId }, { it.toDomain() }),
                     payments = payments,
                     classOrder = card.classNames,
                     today = today,
                 ),
             )
-            AppSnapshot(b.settings, card, ledgers, payments, receiptsByTx, Ledger.dashboard(ledgers, payments, card.classNames, today), users, today)
+            AppSnapshot(b.settings, card, ledgers, payments, receipts, Ledger.dashboard(ledgers, payments, card.classNames, today), users, today)
         }.flowOn(Dispatchers.Default)
     }
 
@@ -143,7 +185,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         val settings: SchoolSettingsEntity,
         val rates: List<FeeRateEntity>,
         val students: List<StudentEntity>,
-        val fees: List<StudentFeeEntity>,
+        val enrollments: List<EnrollmentEntity>,
         val schedules: List<PaymentScheduleEntity>,
     )
 
@@ -195,8 +237,8 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
     }
 
     // --------------------------------------------------------------- students
-    fun preview(card: FeeRateCard, form: StudentForm): FeeAssessment =
-        FeeCalculator.assess(card, form.className, form.type, form.status, form.bookType, form.discountBp)
+    fun preview(card: FeeRateCard, form: EnrollmentForm): FeeAssessment =
+        FeeCalculator.assess(card, form.className, form.type, form.status, form.bookType, form.discountBp, form.periodMonths)
 
     private suspend fun nextStudentCode(): String {
         var s = settingsDao.get()!!
@@ -209,61 +251,59 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         return code
     }
 
-    private suspend fun writeAssessment(studentId: Long, fee: FeeAssessment, term: PaymentTerm, yearStart: LocalDate) {
-        feeDao.upsert(fee.toEntity(studentId, System.currentTimeMillis()))
-        scheduleDao.deleteForStudent(studentId)
-        scheduleDao.insertAll(ScheduleCalculator.generate(term, fee.netTotal, yearStart).map { it.toEntity(studentId) })
+    private fun cleanName(name: String) = name.trim().replace(Regex("\\s+"), " ")
+
+    private suspend fun validateStudent(id: Long?, form: StudentForm) {
+        val name = cleanName(form.name)
+        if (name.isBlank()) throw FeeException("Student name is required")
+        if (name.length > 100) throw FeeException("Student name is too long")
+        val en = form.enrollNo.trim()
+        if (en.length > 30) throw FeeException("Enroll No. is too long (30 characters max)")
+        if (en.isNotEmpty()) studentDao.byEnrollNo(en, id ?: -1)?.let { throw FeeException("Enroll No. $en is already used by ${it.name} (${it.code})") }
     }
 
-    private fun validate(form: StudentForm, card: FeeRateCard) {
-        if (form.name.isBlank()) throw FeeException("Student name is required")
-        if (form.name.trim().length > 100) throw FeeException("Student name is too long")
+    private fun validateEnrollment(form: EnrollmentForm, card: FeeRateCard) {
         if (card.rateFor(form.className) == null) throw FeeException("Class '${form.className}' has no fee rates")
         if (form.discountBp !in 0..10000) throw FeeException("Discount must be between 0% and 100%")
+        if (form.periodMonths !in 1..24) throw FeeException("Period must be 1–24 months")
+        if (form.academicYear.isBlank()) throw FeeException("Academic year is required")
+        if (form.academicYear.trim().length > 20) throw FeeException("Academic year is too long")
     }
 
-    /** Creates or updates a student. Returns the student id. */
-    suspend fun saveStudent(id: Long?, form: StudentForm, by: String): Long = db.withTransaction {
-        val (settings, card) = currentCard()
-        validate(form, card)
-        val name = form.name.trim().replace(Regex("\\s+"), " ")
-        val key = name.lowercase(Locale.ROOT)
-        studentDao.findDuplicate(key, form.className, id ?: -1)?.let {
-            throw FeeException("${it.name} is already registered in ${it.className} (${it.code}). Duplicate registration is not allowed.")
+    /** Same student name already enrolled in this class and year (another student record)? */
+    private suspend fun nameClash(studentId: Long, nameKey: String, form: EnrollmentForm): String? {
+        val others = studentDao.getAll().filter { it.nameKey == nameKey && it.id != studentId }
+        for (o in others) {
+            enrollmentDao.forStudent(o.id).firstOrNull { it.className.equals(form.className, true) && it.academicYear.equals(form.academicYear.trim(), true) }
+                ?.let { return "${o.name} is already registered in ${it.className} ${it.academicYear} (${o.code}). Duplicate registration is not allowed – open that student instead." }
         }
+        return null
+    }
+
+    /** Creates or updates a student; a new student can get a first class enrollment at once. Returns the student id. */
+    suspend fun saveStudent(id: Long?, form: StudentForm, firstEnrollment: EnrollmentForm?, by: String): Long = db.withTransaction {
+        validateStudent(id, form)
+        val name = cleanName(form.name)
+        val key = name.lowercase(Locale.ROOT)
+        val en = form.enrollNo.trim().ifEmpty { null }
         val now = System.currentTimeMillis()
-        val yearStart = LocalDate.ofEpochDay(settings.academicYearStart)
         if (id == null) {
+            val (_, card) = currentCard()
+            if (firstEnrollment != null) {
+                validateEnrollment(firstEnrollment, card)
+                nameClash(-1, key, firstEnrollment)?.let { throw FeeException(it) }
+            }
+            val code = nextStudentCode()
             val newId = studentDao.insert(
-                StudentEntity(
-                    code = nextStudentCode(), name = name, nameKey = key, className = form.className, studentType = form.type.name,
-                    studentStatus = form.status.name, bookType = form.bookType.name, paymentTerm = form.term.name,
-                    discountBp = form.discountBp, remarks = form.remarks.trim(), registeredOn = LocalDate.now().toEpochDay(), updatedAt = now,
-                ),
+                StudentEntity(code = code, enrollNo = en, name = name, nameKey = key, remarks = form.remarks.trim(), registeredOn = LocalDate.now().toEpochDay(), updatedAt = now),
             )
-            val fee = preview(card, form.copy(name = name))
-            writeAssessment(newId, fee, form.term, yearStart)
-            audit(by, "STUDENT_ADD", "$name ${form.className} net ${fee.netTotal}")
+            audit(by, "STUDENT_ADD", "$code $name${en?.let { " enroll no. $it" } ?: ""}")
+            if (firstEnrollment != null) insertEnrollment(newId, firstEnrollment, card, by)
             newId
         } else {
             val old = studentDao.get(id) ?: throw FeeException("Student not found")
-            val updated = old.copy(
-                name = name, nameKey = key, className = form.className, studentType = form.type.name, studentStatus = form.status.name,
-                bookType = form.bookType.name, paymentTerm = form.term.name, discountBp = form.discountBp, remarks = form.remarks.trim(), updatedAt = now,
-            )
-            studentDao.update(updated)
-            val feeChanged = old.className != updated.className || old.studentType != updated.studentType || old.studentStatus != updated.studentStatus ||
-                old.bookType != updated.bookType || old.discountBp != updated.discountBp
-            val existingFee = feeDao.get(id)?.toDomain()
-            when {
-                feeChanged || existingFee == null -> {
-                    val fee = preview(card, form)
-                    writeAssessment(id, fee, form.term, yearStart)
-                    audit(by, "STUDENT_REASSESS", "${old.code}: net ${existingFee?.netTotal ?: 0} -> ${fee.netTotal}")
-                }
-                old.paymentTerm != updated.paymentTerm -> writeAssessment(id, existingFee ?: preview(card, form), form.term, yearStart)
-            }
-            audit(by, "STUDENT_EDIT", "${old.code} $name")
+            studentDao.update(old.copy(enrollNo = en, name = name, nameKey = key, remarks = form.remarks.trim(), updatedAt = now))
+            audit(by, "STUDENT_EDIT", "${old.code} $name${if ((old.enrollNo ?: "") != (en ?: "")) " enroll no. ${old.enrollNo ?: "–"} -> ${en ?: "–"}" else ""}")
             id
         }
     }
@@ -274,55 +314,119 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         audit(by, if (active) "STUDENT_REACTIVATE" else "STUDENT_DEACTIVATE", s.code)
     }
 
-    /** Moves a student to another class; payments are kept. Optionally re-assesses with current rates. */
-    suspend fun promote(id: Long, newClass: String, markOld: Boolean, recalculate: Boolean, by: String) = db.withTransaction {
-        val (settings, card) = currentCard()
-        if (card.rateFor(newClass) == null) throw FeeException("Class '$newClass' has no fee rates")
-        val s = studentDao.get(id) ?: throw FeeException("Student not found")
-        studentDao.findDuplicate(s.nameKey, newClass, id)?.let { throw FeeException("${it.name} already exists in $newClass (${it.code})") }
-        val updated = s.copy(className = newClass, studentStatus = if (markOld) StudentStatus.OLD.name else s.studentStatus, updatedAt = System.currentTimeMillis())
-        studentDao.update(updated)
-        if (recalculate) {
-            val fee = FeeCalculator.assess(card, updated.toDomain())
-            writeAssessment(id, fee, PaymentTerm.valueOf(updated.paymentTerm), LocalDate.ofEpochDay(settings.academicYearStart))
-        }
-        audit(by, "STUDENT_PROMOTE", "${s.code}: ${s.className} -> $newClass${if (recalculate) " (fees recalculated)" else ""}")
+    // ------------------------------------------------------------ enrollments
+    private suspend fun writeSchedule(e: EnrollmentEntity) {
+        scheduleDao.deleteForEnrollment(e.id)
+        scheduleDao.insertAll(
+            ScheduleCalculator.generate(PaymentTerm.valueOf(e.paymentTerm), e.netTotal, LocalDate.ofEpochDay(e.startDate), e.periodMonths).map { it.toEntity(e.id) },
+        )
     }
 
-    /** Explicit re-assessment of existing students with the CURRENT fee rates. */
-    suspend fun recalculate(ids: List<Long>?, by: String): Int = db.withTransaction {
-        val (settings, card) = currentCard()
-        val targets = if (ids == null) studentDao.getAll().filter { it.active } else ids.mapNotNull { studentDao.get(it) }
-        val start = LocalDate.ofEpochDay(settings.academicYearStart)
-        targets.forEach { s ->
-            val fee = FeeCalculator.assess(card, s.toDomain())
-            writeAssessment(s.id, fee, PaymentTerm.valueOf(s.paymentTerm), start)
+    private suspend fun insertEnrollment(studentId: Long, form: EnrollmentForm, card: FeeRateCard, by: String): Long {
+        val year = form.academicYear.trim()
+        enrollmentDao.findDuplicate(studentId, form.className, year, -1)?.let {
+            throw FeeException("This student is already enrolled in ${it.className} for $year")
         }
-        audit(by, "RECALCULATE", "${targets.size} student(s) re-assessed with current rates")
+        val now = System.currentTimeMillis()
+        val fee = preview(card, form)
+        val base = EnrollmentEntity(
+            studentId = studentId, className = form.className, academicYear = year, startDate = form.startDate.toEpochDay(), periodMonths = form.periodMonths,
+            studentType = form.type.name, studentStatus = form.status.name, bookType = form.bookType.name, paymentTerm = form.term.name,
+            discountBp = form.discountBp, remarks = form.remarks.trim(), createdOn = LocalDate.now().toEpochDay(), updatedAt = now,
+            trainingFee = 0, instrumentFee = 0, bookFee = 0, hostelFee = 0, laundryFee = 0, entranceFee = 0, grossTotal = 0, discountAmount = 0, netTotal = 0, assessedAt = now,
+        ).withFee(fee, now)
+        val id = enrollmentDao.insert(base)
+        writeSchedule(base.copy(id = id))
+        audit(by, "ENROLL_ADD", "student $studentId: ${form.className} $year from ${form.startDate} (${form.periodMonths} months) net ${fee.netTotal}")
+        return id
+    }
+
+    /** Adds (id == null) or edits a class enrollment. Fee-relevant changes re-assess with the CURRENT rates. */
+    suspend fun saveEnrollment(id: Long?, studentId: Long, form: EnrollmentForm, by: String): Long = db.withTransaction {
+        val (_, card) = currentCard()
+        validateEnrollment(form, card)
+        val st = studentDao.get(studentId) ?: throw FeeException("Student not found")
+        nameClash(studentId, st.nameKey, form)?.let { throw FeeException(it) }
+        if (id == null) return@withTransaction insertEnrollment(studentId, form, card, by)
+        val old = enrollmentDao.get(id) ?: throw FeeException("Enrollment not found")
+        val year = form.academicYear.trim()
+        enrollmentDao.findDuplicate(studentId, form.className, year, id)?.let { throw FeeException("This student is already enrolled in ${it.className} for $year") }
+        val now = System.currentTimeMillis()
+        var updated = old.copy(
+            className = form.className, academicYear = year, startDate = form.startDate.toEpochDay(), periodMonths = form.periodMonths,
+            studentType = form.type.name, studentStatus = form.status.name, bookType = form.bookType.name, paymentTerm = form.term.name,
+            discountBp = form.discountBp, remarks = form.remarks.trim(), updatedAt = now,
+        )
+        val feeChanged = old.className != updated.className || old.studentType != updated.studentType || old.studentStatus != updated.studentStatus ||
+            old.bookType != updated.bookType || old.discountBp != updated.discountBp || old.periodMonths != updated.periodMonths
+        if (feeChanged) {
+            val fee = preview(card, form)
+            updated = updated.withFee(fee, now)
+            audit(by, "ENROLL_REASSESS", "enrollment $id: net ${old.netTotal} -> ${fee.netTotal}")
+        }
+        enrollmentDao.update(updated)
+        if (feeChanged || old.paymentTerm != updated.paymentTerm || old.startDate != updated.startDate || old.periodMonths != updated.periodMonths) writeSchedule(updated)
+        audit(by, "ENROLL_EDIT", "enrollment $id: ${updated.className} ${updated.academicYear}")
+        id
+    }
+
+    suspend fun setEnrollmentActive(id: Long, active: Boolean, by: String) = db.withTransaction {
+        val e = enrollmentDao.get(id) ?: throw FeeException("Enrollment not found")
+        enrollmentDao.update(e.copy(active = active, updatedAt = System.currentTimeMillis()))
+        audit(by, if (active) "ENROLL_REACTIVATE" else "ENROLL_DEACTIVATE", "enrollment $id ${e.className} ${e.academicYear}")
+    }
+
+    /** Explicit re-assessment of enrollments with the CURRENT fee rates (null = every active enrollment). */
+    suspend fun recalculate(enrollmentIds: List<Long>?, by: String): Int = db.withTransaction {
+        val (_, card) = currentCard()
+        val activeStudents = studentDao.getAll().filter { it.active }.map { it.id }.toSet()
+        val targets = if (enrollmentIds == null) enrollmentDao.getAll().filter { it.active && it.studentId in activeStudents } else enrollmentIds.mapNotNull { enrollmentDao.get(it) }
+        val now = System.currentTimeMillis()
+        targets.forEach { e ->
+            val fee = FeeCalculator.assess(card, e.toDomain())
+            val updated = e.withFee(fee, now)
+            enrollmentDao.update(updated)
+            writeSchedule(updated)
+        }
+        audit(by, "RECALCULATE", "${targets.size} enrollment(s) re-assessed with current rates")
         targets.size
     }
 
     // --------------------------------------------------------------- payments
-    /** Records a payment and its receipt atomically. Returns the receipt id. */
+    private suspend fun studentBalance(studentId: Long): Long =
+        enrollmentDao.forStudent(studentId).sumOf { it.netTotal } - txDao.validForStudent(studentId).sumOf { it.amount }
+
+    /** Records a payment of one or more lines as ONE receipt, atomically. Returns the receipt id. */
     suspend fun recordPayment(req: PaymentRequest, by: String): Long = db.withTransaction {
-        if (req.amount <= 0) throw FeeException("Amount must be greater than zero")
+        if (req.items.isEmpty()) throw FeeException("Select at least one item to pay")
+        if (req.items.any { it.amount <= 0 }) throw FeeException("Every amount must be greater than zero")
         if (req.date.isAfter(LocalDate.now())) throw FeeException("Collection date cannot be in the future")
-        val s = studentDao.get(req.studentId) ?: throw FeeException("Student not found")
-        if (!s.active) throw FeeException("${s.name} is deactivated. Reactivate the student before collecting fees.")
-        val net = feeDao.get(s.id)?.netTotal ?: 0
-        val previousBalance = net - txDao.validForStudent(s.id).sumOf { it.amount }
+        val students = req.items.map { it.studentId }.distinct().map { sid -> studentDao.get(sid) ?: throw FeeException("Student not found") }
+        students.firstOrNull { !it.active }?.let { throw FeeException("${it.name} is deactivated. Reactivate the student before collecting fees.") }
+        req.items.forEach { item ->
+            val e = enrollmentDao.get(item.enrollmentId) ?: throw FeeException("Class enrollment not found")
+            if (e.studentId != item.studentId) throw FeeException("Enrollment does not belong to the student")
+            if (!e.active) throw FeeException("${e.className} ${e.academicYear} is deactivated")
+        }
+        val previous = students.sumOf { studentBalance(it.id) }
+        val total = req.items.sumOf { it.amount }
         val now = System.currentTimeMillis()
-        val txId = txDao.insert(
-            PaymentTransactionEntity(
-                studentId = s.id, date = req.date.toEpochDay(), amount = req.amount, scheduleSeq = req.scheduleSeq,
-                paymentFor = req.paymentFor.trim(), remarks = req.remarks.trim(), receivedBy = by, createdAt = now,
-            ),
-        )
         val receiptNo = nextReceiptNo(req.date)
         val rid = receiptDao.insert(
-            ReceiptEntity(receiptNo = receiptNo, transactionId = txId, issuedAt = now, previousBalance = previousBalance, remainingBalance = previousBalance - req.amount, receivedBy = by),
+            ReceiptEntity(
+                receiptNo = receiptNo, date = req.date.toEpochDay(), payerName = students.joinToString(", ") { it.name }, issuedAt = now,
+                previousBalance = previous, remainingBalance = previous - total, receivedBy = by, remarks = req.remarks.trim(),
+            ),
         )
-        audit(by, "PAYMENT", "$receiptNo ${s.code} ${req.amount}")
+        req.items.forEach { item ->
+            txDao.insert(
+                PaymentTransactionEntity(
+                    receiptId = rid, studentId = item.studentId, enrollmentId = item.enrollmentId, date = req.date.toEpochDay(), amount = item.amount,
+                    scheduleSeq = item.scheduleSeq, paymentFor = item.paymentFor.trim(), remarks = req.remarks.trim(), receivedBy = by, createdAt = now,
+                ),
+            )
+        }
+        audit(by, "PAYMENT", "$receiptNo ${req.items.size} line(s) ${students.joinToString(",") { it.code }} $total")
         rid
     }
 
@@ -337,30 +441,44 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         return no
     }
 
-    suspend fun voidPayment(txId: Long, reason: String, by: String) = db.withTransaction {
-        if (reason.isBlank()) throw FeeException("A reason is required to void a payment")
-        val t = txDao.get(txId) ?: throw FeeException("Transaction not found")
-        if (t.voided) throw FeeException("Already voided")
-        txDao.update(t.copy(voided = true, voidReason = reason.trim(), voidedBy = by))
-        audit(by, "PAYMENT_VOID", "tx $txId amount ${t.amount}: ${reason.trim()}")
+    /** Voids a whole receipt (all its lines). */
+    suspend fun voidReceipt(receiptId: Long, reason: String, by: String) = db.withTransaction {
+        if (reason.isBlank()) throw FeeException("A reason is required to void a receipt")
+        val r = receiptDao.get(receiptId) ?: throw FeeException("Receipt not found")
+        if (r.voided) throw FeeException("Already voided")
+        receiptDao.update(r.copy(voided = true, voidReason = reason.trim(), voidedBy = by))
+        txDao.forReceipt(receiptId).forEach { txDao.update(it.copy(voided = true, voidReason = reason.trim(), voidedBy = by)) }
+        audit(by, "RECEIPT_VOID", "${r.receiptNo}: ${reason.trim()}")
     }
 
-    suspend fun markPrinted(receiptId: Long) = withContext(Dispatchers.IO) { receiptDao.incrementPrint(receiptId) }
-
-    suspend fun receipt(receiptId: Long): ReceiptEntity? = withContext(Dispatchers.IO) { receiptDao.get(receiptId) }
+    suspend fun markPrinted(receiptIds: List<Long>) = withContext(Dispatchers.IO) { receiptIds.forEach { receiptDao.incrementPrint(it) } }
 
     // ------------------------------------------------------------ settings
-    suspend fun saveRates(card: FeeRateCard, by: String) = db.withTransaction {
+    private fun validateCard(card: FeeRateCard) {
         if (card.classes.isEmpty()) throw FeeException("At least one class is required")
         if (card.classes.map { it.className.uppercase(Locale.ROOT) }.toSet().size != card.classes.size) throw FeeException("Class names must be unique")
+        if (card.classes.any { it.className.isBlank() }) throw FeeException("Class name cannot be blank")
         val all = card.classes.flatMap { listOf(it.trainingFee, it.bookDayMyanmar, it.bookDayIntl, it.bookHostelMyanmar, it.bookHostelIntl, it.hostelFee) } +
             listOf(card.instrumentFee, card.laundryPerMonth, card.entranceFee)
         if (all.any { it < 0 }) throw FeeException("Fee amounts cannot be negative")
-        if (card.monthsPerYear !in 1..12) throw FeeException("Months per year must be 1–12")
+        if (card.monthsPerYear !in 1..24) throw FeeException("Default period must be 1–24 months")
+        card.classes.forEach { c ->
+            if (c.startMonth !in 1..12) throw FeeException("${c.className}: start month must be 1–12")
+            if (c.startDay !in 1..31) throw FeeException("${c.className}: start day must be 1–31")
+            if (c.periodMonths !in 1..24) throw FeeException("${c.className}: period must be 1–24 months")
+        }
+    }
+
+    private suspend fun writeCard(card: FeeRateCard) {
         val s = settingsDao.get()!!
         settingsDao.upsert(s.copy(instrumentFee = card.instrumentFee, laundryPerMonth = card.laundryPerMonth, monthsPerYear = card.monthsPerYear, entranceFee = card.entranceFee, ratesUpdatedAt = System.currentTimeMillis()))
         rateDao.deleteAll()
         rateDao.insertAll(card.classes.mapIndexed { i, c -> c.copy(sortOrder = i).toEntity() })
+    }
+
+    suspend fun saveRates(card: FeeRateCard, by: String) = db.withTransaction {
+        validateCard(card)
+        writeCard(card)
         audit(by, "RATES_UPDATE", "Fee rates changed (${card.classes.size} classes). Existing assessments unchanged.")
     }
 
@@ -369,81 +487,198 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         if (!Regex("^[A-Za-z0-9]{1,8}$").matches(receiptPrefix.trim())) throw FeeException("Receipt prefix: 1–8 letters or digits")
         val s = settingsDao.get()!!
         settingsDao.upsert(s.copy(schoolName = name.trim(), address = address.trim(), phone = phone.trim(), receiptPrefix = receiptPrefix.trim().uppercase(Locale.ROOT), academicYearStart = yearStart.toEpochDay()))
-        if (s.academicYearStart != yearStart.toEpochDay()) {
-            // Due dates follow the academic-year start; amounts and payments are untouched.
-            studentDao.getAll().forEach { st ->
-                val fee = feeDao.get(st.id) ?: return@forEach
-                scheduleDao.deleteForStudent(st.id)
-                scheduleDao.insertAll(ScheduleCalculator.generate(PaymentTerm.valueOf(st.paymentTerm), fee.netTotal, yearStart).map { it.toEntity(st.id) })
-            }
-        }
         audit(by, "SCHOOL_PROFILE", "Updated school profile")
     }
 
     // -------------------------------------------------------------- import
-    suspend fun applyImport(imp: WorkbookImport, updateRates: Boolean, by: String): ImportSummary = db.withTransaction {
+    /** Default start date / period / academic year for an imported enrollment, from the class settings. */
+    private fun formOf(card: FeeRateCard, e: ImportedEnrollment, today: LocalDate): EnrollmentForm {
+        val rate = card.rateFor(e.className)!!
+        val period = e.periodMonths ?: rate.periodMonths
+        // "2025-2026" without a start date → the class's start day in 2025
+        val start = e.startDate
+            ?: e.academicYear?.let { y -> Regex("(19|20)\\d{2}").find(y)?.value?.toInt()?.let { rate.startIn(it) } }
+            ?: rate.defaultStart(today)
+        return EnrollmentForm(
+            className = rate.className, academicYear = e.academicYear ?: academicYearLabel(start, period), startDate = start, periodMonths = period,
+            type = e.type, status = e.status, bookType = e.bookType, discountBp = e.discountBp, term = e.term, remarks = e.remarks,
+        )
+    }
+
+    /**
+     * Applies an import (workbook or module file) in ONE transaction. With [dryRun] everything is
+     * checked and counted exactly as a real import, then rolled back – used for the preview.
+     */
+    suspend fun applyImport(imp: ImportBundle, updateRates: Boolean, dryRun: Boolean, by: String): ImportSummary = try {
+        db.withTransaction {
+            val s = runImport(imp, updateRates, dryRun, by)
+            if (dryRun) throw DryRunRollback(s)
+            s
+        }
+    } catch (e: DryRunRollback) {
+        e.summary
+    }
+
+    private suspend fun runImport(imp: ImportBundle, updateRates: Boolean, dryRun: Boolean, by: String): ImportSummary {
         val problems = ArrayList<String>()
+        val today = LocalDate.now()
         var ratesUpdated = false
+        var classesAdded = 0
+        var classesUpdated = 0
         if (updateRates && imp.rates != null) {
-            val s = settingsDao.get()!!
-            val r = imp.rates
-            settingsDao.upsert(s.copy(instrumentFee = r.instrumentFee, laundryPerMonth = r.laundryPerMonth, monthsPerYear = r.monthsPerYear, entranceFee = r.entranceFee, ratesUpdatedAt = System.currentTimeMillis()))
-            rateDao.deleteAll()
-            rateDao.insertAll(r.classes.map { it.toEntity() })
+            validateCard(imp.rates)
+            writeCard(imp.rates)
             ratesUpdated = true
         }
-        val (settings, card) = currentCard()
-        val start = LocalDate.ofEpochDay(settings.academicYearStart)
-        val existing = studentDao.getAll()
-        val keyToId = existing.associate { ImportPlanner.studentKey(it.name, it.className) to it.id }.toMutableMap()
-        val candidates = existing.map { MatchCandidate(it.id, it.code, it.name, it.className) }.toMutableList()
-        var added = 0
-        var dupStudents = 0
-        val now = System.currentTimeMillis()
-        for (st in imp.students) {
-            val key = ImportPlanner.studentKey(st.name, st.className)
-            if (keyToId.containsKey(key)) { dupStudents++; continue }
-            if (card.rateFor(st.className) == null) { problems += "Student_Register row ${st.row}: class ${st.className} has no rates – skipped"; continue }
-            val code = st.code?.takeIf { studentDao.countCode(it) == 0 } ?: nextStudentCode()
-            val id = studentDao.insert(
-                StudentEntity(
-                    code = code, name = st.name, nameKey = st.name.trim().lowercase(Locale.ROOT), className = st.className, studentType = st.type.name,
-                    studentStatus = st.status.name, bookType = st.bookType.name, paymentTerm = st.term.name, discountBp = st.discountBp,
-                    remarks = st.remarks, registeredOn = LocalDate.now().toEpochDay(), updatedAt = now,
-                ),
-            )
-            writeAssessment(id, FeeCalculator.assess(card, st.className, st.type, st.status, st.bookType, st.discountBp), st.term, start)
-            keyToId[key] = id
-            candidates += MatchCandidate(id, code, st.name, st.className)
-            added++
+        if (imp.classRates.isNotEmpty()) {
+            val (_, card) = currentCard()
+            val merged = card.classes.toMutableList()
+            imp.classRates.forEach { c ->
+                val i = merged.indexOfFirst { it.className.equals(c.className, true) }
+                if (i >= 0) { if (merged[i].copy(sortOrder = 0) != c.copy(sortOrder = 0)) classesUpdated++; merged[i] = c.copy(className = merged[i].className, sortOrder = merged[i].sortOrder) }
+                else { merged += c.copy(sortOrder = merged.size); classesAdded++ }
+            }
+            val newCard = card.copy(classes = merged)
+            validateCard(newCard)
+            writeCard(newCard)
         }
+        val (_, card) = currentCard()
+        val now = System.currentTimeMillis()
+
+        // Candidates for matching: existing students + those created by this import.
+        val enrollmentsByStudent = enrollmentDao.getAll().groupBy { it.studentId }.mapValues { (_, v) -> v.toMutableList() }.toMutableMap()
+        val candidates = studentDao.getAll().map { MatchCandidate(it.id, it.code, it.enrollNo ?: "", it.name, enrollmentsByStudent[it.id].orEmpty().map { e -> e.className }.toSet()) }.toMutableList()
+        val createdThisImport = HashMap<String, Long>()  // lower-case name -> id, for rows without IDs
+        fun refresh(id: Long) {
+            val i = candidates.indexOfFirst { it.key == id }
+            if (i >= 0) candidates[i] = candidates[i].copy(classNames = enrollmentsByStudent[id].orEmpty().map { it.className }.toSet())
+        }
+
+        var studentsAdded = 0
+        var studentsExisting = 0
+        var enrollAdded = 0
+        var enrollDup = 0
+
+        suspend fun addEnrollment(studentId: Long, e: ImportedEnrollment, where: String) {
+            val form = formOf(card, e, today)
+            val list = enrollmentsByStudent.getOrPut(studentId) { ArrayList() }
+            if (list.any { it.className.equals(form.className, true) && it.academicYear.equals(form.academicYear, true) }) { enrollDup++; return }
+            val id = insertEnrollment(studentId, form, card, by)
+            list += enrollmentDao.get(id)!!
+            refresh(studentId)
+            enrollAdded++
+        }
+
+        val existingSeen = HashSet<Long>()
+        // Rows without Enroll No. / Student ID (e.g. the original workbook) are matched by name: a student
+        // created earlier in this file, else the ONE student in the app with exactly that name.
+        val dbByName = studentDao.getAll().groupBy { it.nameKey }
+        for (st in imp.students) {
+            val where = "${st.sheet} row ${st.row}"
+            val nameKey = cleanName(st.name).lowercase(Locale.ROOT)
+            val existingId: Long? = when {
+                st.enrollNo != null -> studentDao.byEnrollNo(st.enrollNo)?.id
+                st.code != null -> studentDao.byCode(st.code)?.id
+                else -> createdThisImport[nameKey] ?: dbByName[nameKey]?.singleOrNull()?.id
+            }
+            val id = if (existingId != null) {
+                if (createdThisImport.values.none { it == existingId } && existingSeen.add(existingId)) studentsExisting++
+                existingId
+            } else {
+                val code = st.code?.takeIf { studentDao.countCode(it) == 0 } ?: nextStudentCode()
+                val en = st.enrollNo?.takeIf { studentDao.byEnrollNo(it) == null }
+                val name = cleanName(st.name)
+                val newId = studentDao.insert(StudentEntity(code = code, enrollNo = en, name = name, nameKey = name.lowercase(Locale.ROOT), remarks = st.remarks, registeredOn = today.toEpochDay(), updatedAt = now))
+                candidates += MatchCandidate(newId, code, en ?: "", name, emptySet())
+                if (st.enrollNo == null && st.code == null) createdThisImport[nameKey] = newId
+                else createdThisImport["#" + newId] = newId
+                studentsAdded++
+                newId
+            }
+            if (st.enrollment != null) {
+                try { addEnrollment(id, st.enrollment, where) } catch (e: FeeException) { problems += "$where: ${e.message} – class not added" }
+            }
+        }
+
+        for (row in imp.enrollments) {
+            val where = "${row.sheet} row ${row.row}"
+            when (val m = ImportPlanner.match(row.ref, candidates)) {
+                is MatchResult.Found -> try { addEnrollment(m.candidate.key, row.enrollment, where) } catch (e: FeeException) { problems += "$where: ${e.message} – skipped" }
+                is MatchResult.Problem -> problems += "$where: ${m.message} – skipped"
+            }
+        }
+
+        // Payments: rows with the same receipt number are one receipt; blank numbers get one receipt each.
+        var receiptsAdded = 0
         var payAdded = 0
         var dupPays = 0
-        val terms = HashMap<Long, PaymentTerm>()
-        // Running balances so imported receipts show correct previous/remaining balances.
         val balances = HashMap<Long, Long>()
-        for (p in imp.payments.sortedWith(compareBy({ it.date }, { it.row }))) {
-            if (p.receiptNo.isNotBlank() && receiptDao.countNo(p.receiptNo) > 0) { dupPays++; continue }
-            val id = when (val m = ImportPlanner.match(p, candidates)) {
-                is MatchResult.Found -> m.candidate.key
-                is MatchResult.Problem -> { problems += "Cash_Collection row ${p.row}: ${m.message} – skipped"; continue }
+        suspend fun balanceOf(id: Long) = balances[id] ?: studentBalance(id)
+        val groups = imp.payments.groupBy { if (it.receiptNo.isBlank()) "#row${it.sheet}${it.row}" else it.receiptNo.uppercase(Locale.ROOT) }.values
+            .sortedWith(compareBy({ it.first().date }, { it.first().row }))
+        for (group in groups) {
+            val first = group.first()
+            if (first.receiptNo.isNotBlank() && receiptDao.countNo(first.receiptNo) > 0) { dupPays += group.size; continue }
+            val resolved = ArrayList<Triple<ImportedPayment, Long, EnrollmentEntity>>()
+            var failed: String? = null
+            for (p in group) {
+                val sid = when (val m = ImportPlanner.match(p.ref, candidates)) {
+                    is MatchResult.Found -> m.candidate.key
+                    is MatchResult.Problem -> { failed = "${p.sheet} row ${p.row}: ${m.message}"; break }
+                }
+                val e = pickEnrollment(enrollmentsByStudent[sid].orEmpty(), p)
+                if (e == null) { failed = "${p.sheet} row ${p.row}: ${p.ref.display}: ${enrollmentProblem(enrollmentsByStudent[sid].orEmpty(), p)}"; break }
+                resolved += Triple(p, sid, e)
             }
-            val st = studentDao.get(id)!!
-            val term = terms.getOrPut(id) { PaymentTerm.valueOf(st.paymentTerm) }
-            val prev = balances[id] ?: ((feeDao.get(id)?.netTotal ?: 0) - txDao.validForStudent(id).sumOf { it.amount })
-            val txId = txDao.insert(
-                PaymentTransactionEntity(
-                    studentId = id, date = p.date.toEpochDay(), amount = p.amount, scheduleSeq = ScheduleCalculator.parsePaymentFor(p.paymentFor, term),
-                    paymentFor = p.paymentFor, remarks = p.remarks, receivedBy = p.receivedBy, createdAt = now, imported = true,
+            if (failed != null) {
+                problems += "$failed – ${if (group.size > 1) "receipt ${first.receiptNo} (${group.size} rows)" else "row"} skipped"
+                continue
+            }
+            val sids = resolved.map { it.second }.distinct()
+            val prev = sids.sumOf { balanceOf(it) }
+            val total = group.sumOf { it.amount }
+            val no = first.receiptNo.ifBlank { nextReceiptNo(first.date) }
+            val names = sids.mapNotNull { id -> candidates.firstOrNull { it.key == id }?.name }
+            val rid = receiptDao.insert(
+                ReceiptEntity(
+                    receiptNo = no, date = first.date.toEpochDay(), payerName = names.joinToString(", "), issuedAt = now, previousBalance = prev,
+                    remainingBalance = prev - total, receivedBy = first.receivedBy, remarks = first.remarks, imported = true,
                 ),
             )
-            val no = p.receiptNo.ifBlank { nextReceiptNo(p.date) }
-            receiptDao.insert(ReceiptEntity(receiptNo = no, transactionId = txId, issuedAt = now, previousBalance = prev, remainingBalance = prev - p.amount, receivedBy = p.receivedBy))
-            balances[id] = prev - p.amount
-            payAdded++
+            resolved.forEach { (p, sid, e) ->
+                txDao.insert(
+                    PaymentTransactionEntity(
+                        receiptId = rid, studentId = sid, enrollmentId = e.id, date = p.date.toEpochDay(), amount = p.amount,
+                        scheduleSeq = ScheduleCalculator.parsePaymentFor(p.paymentFor, PaymentTerm.valueOf(e.paymentTerm), e.periodMonths),
+                        paymentFor = p.paymentFor, remarks = p.remarks, receivedBy = p.receivedBy, createdAt = now, imported = true,
+                    ),
+                )
+                balances[sid] = balanceOf(sid) - p.amount
+            }
+            receiptsAdded++
+            payAdded += group.size
         }
-        audit(by, "IMPORT", "rates=$ratesUpdated students=$added payments=$payAdded")
-        ImportSummary(ratesUpdated, added, dupStudents, payAdded, dupPays, problems)
+        if (!dryRun) audit(by, "IMPORT", "${imp.title}: rates=$ratesUpdated classes+$classesAdded/~$classesUpdated students=$studentsAdded enrollments=$enrollAdded receipts=$receiptsAdded lines=$payAdded")
+        return ImportSummary(dryRun, ratesUpdated, classesAdded, classesUpdated, studentsAdded, studentsExisting, enrollAdded, enrollDup, receiptsAdded, payAdded, dupPays, problems)
+    }
+
+    /** The enrollment a payment row belongs to: by class / academic year, else the only one, else the one running on the payment date. */
+    private fun pickEnrollment(list: List<EnrollmentEntity>, p: ImportedPayment): EnrollmentEntity? {
+        var c = list
+        p.ref.className?.let { cls -> c = c.filter { it.className.equals(cls, true) } }
+        p.academicYear?.let { y -> c = c.filter { it.academicYear.equals(y, true) } }
+        if (c.size <= 1) return c.firstOrNull()
+        val running = c.filter { e ->
+            val start = LocalDate.ofEpochDay(e.startDate)
+            !p.date.isBefore(start.minusMonths(3)) && p.date.isBefore(start.plusMonths(e.periodMonths.toLong()))
+        }
+        return running.singleOrNull()
+    }
+
+    private fun enrollmentProblem(list: List<EnrollmentEntity>, p: ImportedPayment): String = when {
+        list.isEmpty() -> "the student has no class enrollment – import the class first"
+        p.ref.className != null && list.none { it.className.equals(p.ref.className, true) } -> "the student is not enrolled in ${p.ref.className}"
+        else -> "the student has several classes (${list.joinToString { "${it.className} ${it.academicYear}" }}) – fill in Class and Academic Year"
     }
 
     // ------------------------------------------------------- backup/restore

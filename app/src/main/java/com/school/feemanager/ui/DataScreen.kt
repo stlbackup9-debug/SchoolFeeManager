@@ -36,25 +36,43 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.school.feemanager.data.AppSnapshot
 import com.school.feemanager.data.ImportSummary
-import com.school.feemanager.io.WorkbookImport
+import com.school.feemanager.io.ImportBundle
+import com.school.feemanager.io.ImportModule
 import com.school.feemanager.ui.theme.Amber
 import com.school.feemanager.ui.theme.Green
 import com.school.feemanager.ui.theme.Red
 import com.school.feemanager.util.AppRestarter
 
 private const val XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+private val IMPORT_TYPES = arrayOf(XLSX, "text/csv", "text/comma-separated-values", "text/plain", "application/csv", "application/vnd.ms-excel", "application/octet-stream")
 
 @Composable
 fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: () -> Unit) {
     val context = LocalContext.current
-    var preview by remember { mutableStateOf<WorkbookImport?>(null) }
+    var preview by remember { mutableStateOf<ImportBundle?>(null) }
+    var dryRun by remember { mutableStateOf<ImportSummary?>(null) }
     var updateRates by remember { mutableStateOf(true) }
     var summary by remember { mutableStateOf<ImportSummary?>(null) }
     var restoreUri by remember { mutableStateOf<Uri?>(null) }
+    var module by remember { mutableStateOf<ImportModule?>(null) }
+    var templateFor by remember { mutableStateOf<Pair<ImportModule, Boolean>?>(null) }
     val stamp = snap.today.toString()
 
+    fun showPreview(imp: ImportBundle, rates: Boolean) {
+        preview = imp; dryRun = null; updateRates = rates
+        if (!imp.isEmpty) vm.previewImport(imp, rates) { dryRun = it }
+    }
+
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.parseImport(uri) { preview = it; updateRates = it.rates != null && it.rates != snap.card }
+        if (uri != null) vm.parseImport(uri) { showPreview(it, it.rates != null && it.rates != snap.card) }
+    }
+    val moduleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val m = module
+        if (uri != null && m != null) vm.parseModuleImport(m, uri) { showPreview(it, false) }
+    }
+    val templateLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val t = templateFor
+        if (uri != null && t != null) vm.writeTemplate(uri, t.first, t.second)
     }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(XLSX)) { uri -> if (uri != null) vm.exportWorkbook(uri) }
     val backupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> if (uri != null) vm.backup(uri) }
@@ -63,19 +81,37 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
     Column(Modifier.fillMaxSize()) {
         AppTopBar("Data", onBack)
         Column(Modifier.verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (session.isAdmin) SectionCard("Import Excel workbook") {
-                Text("Imports School_Fee_Management.xlsx: Student_Register, Cash_Collection and Fee_Rates. Formulas are not imported – fees, balances, schedules and the dashboard are recalculated by the app. Receipt numbers and dates are preserved; duplicates are skipped.",
-                    style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = { importLauncher.launch(arrayOf(XLSX, "application/octet-stream", "application/vnd.ms-excel")) }, modifier = Modifier.fillMaxWidth()) { Text("Choose .xlsx file…") }
+            if (session.isAdmin) {
+                Text("Import from Excel (.xlsx) or CSV", style = MaterialTheme.typography.titleMedium)
+                Text("Download a template, fill it in Excel / Google Sheets (or save it as CSV), then import it. You always see a preview first; nothing is saved until you tap Import. Suggested order: Fee rates → Students → Class enrollments → Payments.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                listOf(ImportModule.FEE_RATES, ImportModule.STUDENTS, ImportModule.ENROLLMENTS, ImportModule.PAYMENTS).forEach { m ->
+                    SectionCard(m.label) {
+                        Text(m.description, style = MaterialTheme.typography.bodySmall)
+                        Text("Columns: " + m.columns.joinToString(", ") { it.header + if (it.required) " *" else "" },
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(onClick = { module = m; moduleLauncher.launch(IMPORT_TYPES) }, modifier = Modifier.weight(1.2f)) { Text("Import…") }
+                            OutlinedButton(onClick = { templateFor = m to false; templateLauncher.launch("${m.sheetName}_template.xlsx") }, modifier = Modifier.weight(1f)) { Text(".xlsx") }
+                            OutlinedButton(onClick = { templateFor = m to true; templateLauncher.launch("${m.sheetName}_template.csv") }, modifier = Modifier.weight(1f)) { Text(".csv") }
+                        }
+                    }
+                }
+                SectionCard("Import full workbook") {
+                    Text("School_Fee_Management.xlsx (or a workbook exported by this app): Student_Register, Cash_Collection and Fee_Rates. Formulas are not imported – fees, balances, schedules and the dashboard are recalculated by the app. Receipt numbers and dates are preserved; duplicates are skipped.",
+                        style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { importLauncher.launch(arrayOf(XLSX, "application/octet-stream", "application/vnd.ms-excel")) }, modifier = Modifier.fillMaxWidth()) { Text("Choose .xlsx workbook…") }
+                }
             }
             SectionCard("Export to Excel") {
-                Text("Writes Dashboard, Student_Register, Payment_Schedule, Cash_Collection and Fee_Rates in the same structure as the original workbook.", style = MaterialTheme.typography.bodySmall)
+                Text("Writes Dashboard, Student_Register (one row per class enrollment), Payment_Schedule, Cash_Collection and Fee_Rates. The file can be imported again.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = { exportLauncher.launch("School_Fee_Management_$stamp.xlsx") }, modifier = Modifier.fillMaxWidth()) { Text("Export workbook") }
             }
             if (session.isAdmin) SectionCard("Backup & restore") {
-                Text("A backup is a complete copy of the database (students, payments, receipts, users, rates). Save it to Google Drive, a USB drive or another phone regularly.", style = MaterialTheme.typography.bodySmall)
+                Text("A backup is a complete copy of the database (students, classes, payments, receipts, users, rates). Save it to Google Drive, a USB drive or another phone regularly.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { backupLauncher.launch("school_fees_backup_$stamp.db") }, modifier = Modifier.weight(1f)) { Text("Back up now") }
@@ -88,28 +124,37 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
     preview?.let { imp ->
         AlertDialog(
             onDismissRequest = { preview = null },
-            title = { Text("Import preview") },
+            title = { Text("Import preview – ${imp.title}") },
             text = {
-                Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    KeyValue("Worksheets found", imp.sheetsFound.joinToString(", "))
-                    KeyValue("Fee rates", if (imp.rates == null) "not found" else if (imp.rates == snap.card) "same as current" else "${imp.rates.classes.size} classes – different from current")
-                    KeyValue("Students", imp.students.size.toString(), bold = true)
-                    KeyValue("Cash transactions", "${imp.payments.size} (${com.school.feemanager.domain.Money.mmk(imp.payments.sumOf { it.amount })})", bold = true)
-                    KeyValue("Errors (rows skipped)", imp.errors.size.toString(), valueColor = if (imp.errors.isEmpty()) Green else Red)
+                Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    KeyValue("Sheet(s) read", imp.sheetsFound.joinToString(", "))
+                    if (imp.rates != null || imp.sheetsFound.any { it.equals("Fee_Rates", true) }) KeyValue("Fee rates", if (imp.rates == null) "not found" else if (imp.rates == snap.card) "same as current" else "${imp.rates.classes.size} classes – different from current")
+                    if (imp.classRates.isNotEmpty()) KeyValue("Class rate rows", imp.classRates.size.toString(), bold = true)
+                    if (imp.students.isNotEmpty()) KeyValue("Student rows", imp.students.size.toString(), bold = true)
+                    if (imp.enrollments.isNotEmpty()) KeyValue("Class enrollment rows", imp.enrollments.size.toString(), bold = true)
+                    if (imp.payments.isNotEmpty()) KeyValue("Payment rows", "${imp.payments.size} (${com.school.feemanager.domain.Money.mmk(imp.payments.sumOf { it.amount })})", bold = true)
+                    KeyValue("Rows with errors (skipped)", imp.errors.size.toString(), valueColor = if (imp.errors.isEmpty()) Green else Red)
                     KeyValue("Warnings", imp.warnings.size.toString(), valueColor = if (imp.warnings.isEmpty()) Green else Amber)
                     if (imp.rates != null && imp.rates != snap.card) Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(updateRates, { updateRates = it }); Text("Replace current fee rates with the workbook's Fee_Rates")
+                        Checkbox(updateRates, { updateRates = it; vm.previewImport(imp, it) { s -> dryRun = s } }); Text("Replace current fee rates with the workbook's Fee_Rates")
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    val d = dryRun
+                    if (imp.isEmpty) Text("Nothing to import in this file.", color = Red)
+                    else if (d == null) Text("Checking against the data in the app…", style = MaterialTheme.typography.bodySmall)
+                    else {
+                        Text("What the import will do:", style = MaterialTheme.typography.titleSmall)
+                        SummaryLines(d)
                     }
                     if (imp.issues.isNotEmpty()) {
                         HorizontalDivider(Modifier.padding(vertical = 4.dp))
                         imp.issues.take(200).forEach { Text(it.toString(), style = MaterialTheme.typography.bodySmall, color = if (it.isError) Red else Amber) }
                     }
-                    Text("Students already in the app (same name and class) and receipts with numbers already in the app are skipped.", style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
-                TextButton(onClick = { val i = imp; preview = null; vm.applyImport(i, updateRates) { summary = it } },
-                    enabled = imp.students.isNotEmpty() || imp.payments.isNotEmpty() || (imp.rates != null && updateRates)) { Text("Import") }
+                TextButton(onClick = { val i = imp; val r = updateRates; preview = null; vm.applyImport(i, r) { summary = it } },
+                    enabled = !imp.isEmpty && dryRun != null) { Text("Import") }
             },
             dismissButton = { TextButton(onClick = { preview = null }) { Text("Cancel") } },
         )
@@ -121,12 +166,7 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
             title = { Text("Import complete") },
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    KeyValue("Fee rates updated", if (s.ratesUpdated) "Yes" else "No")
-                    KeyValue("Students imported", s.studentsImported.toString(), bold = true)
-                    KeyValue("Students skipped (already exist)", s.studentsSkippedDuplicate.toString())
-                    KeyValue("Transactions imported", s.paymentsImported.toString(), bold = true)
-                    KeyValue("Transactions skipped (receipt exists)", s.paymentsSkippedDuplicate.toString())
-                    s.problems.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = Red) }
+                    SummaryLines(s)
                     Text("Balances, schedules and the dashboard have been recalculated.", style = MaterialTheme.typography.bodySmall)
                 }
             },
@@ -142,5 +182,21 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
             onConfirm = { vm.restore(uri) { AppRestarter.restart(context) } },
             onDismiss = { restoreUri = null },
         )
+    }
+}
+
+@Composable
+private fun SummaryLines(s: ImportSummary) {
+    if (s.ratesUpdated) KeyValue("Fee rates replaced", "Yes")
+    if (s.classesAdded + s.classesUpdated > 0) KeyValue("Classes added / updated", "${s.classesAdded} / ${s.classesUpdated}", bold = true)
+    KeyValue("New students", s.studentsImported.toString(), bold = true)
+    if (s.studentsExisting > 0) KeyValue("Students already in the app", s.studentsExisting.toString())
+    KeyValue("Class enrollments added", s.enrollmentsImported.toString(), bold = true)
+    if (s.enrollmentsSkippedDuplicate > 0) KeyValue("Enrollments skipped (already exist)", s.enrollmentsSkippedDuplicate.toString())
+    KeyValue("Receipts / payment lines added", "${s.receiptsImported} / ${s.paymentsImported}", bold = true)
+    if (s.paymentsSkippedDuplicate > 0) KeyValue("Payment lines skipped (receipt no. exists)", s.paymentsSkippedDuplicate.toString())
+    if (s.problems.isNotEmpty()) {
+        KeyValue("Rows that cannot be imported", s.problems.size.toString(), valueColor = Red)
+        s.problems.take(200).forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = Red) }
     }
 }

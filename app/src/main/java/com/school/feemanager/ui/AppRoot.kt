@@ -64,7 +64,7 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val TABS = listOf(
     Tab("dashboard", "Dashboard", Icons.Default.Dashboard),
     Tab("students", "Students", Icons.Default.People),
-    Tab("payments", "Payments", Icons.Default.CalendarMonth),
+    Tab("payments", "Payables", Icons.Default.CalendarMonth),
     Tab("collection", "Collection", Icons.Default.Payments),
     Tab("reports", "Reports", Icons.Default.Assessment),
     Tab("settings", "Settings", Icons.Default.Settings),
@@ -170,7 +170,9 @@ private fun AppNavHost(nav: NavHostController, vm: AppViewModel, snap: AppSnapsh
             StudentDetailScreen(
                 vm, snap, session, id, onBack = back,
                 onEdit = { nav.navigate("students/edit/$id") },
-                onCollect = { seq -> nav.navigate("collection/new/$id/$seq") },
+                onAddClass = { nav.navigate("students/$id/class/-1") },
+                onEditClass = { eid -> nav.navigate("students/$id/class/$eid") },
+                onPay = { items -> nav.navigate("collection/new/$id?items=${items.joinToString(",")}") },
                 onReceipt = { nav.navigate("collection/receipt/$it") },
             )
         }
@@ -180,20 +182,30 @@ private fun AppNavHost(nav: NavHostController, vm: AppViewModel, snap: AppSnapsh
                 nav.navigate("students/$newId") { popUpTo("students") }
             })
         }
+        composable(
+            "students/{id}/class/{eid}",
+            listOf(navArgument("id") { type = NavType.LongType }, navArgument("eid") { type = NavType.LongType }),
+        ) { e ->
+            val id = e.arguments?.getLong("id") ?: -1L
+            val eid = e.arguments?.getLong("eid") ?: -1L
+            EnrollmentEditScreen(vm, snap, id, if (eid < 0) null else eid, onBack = back, onSaved = back)
+        }
 
-        composable("payments") { PaymentScheduleScreen(snap, onCollect = { sid, seq -> nav.navigate("collection/new/$sid/$seq") }, onStudent = { nav.navigate("students/$it") }) }
+        composable("payments") {
+            PayablesScreen(snap, onPay = { items -> nav.navigate("collection/new/-1?items=${items.joinToString(",")}") }, onStudent = { nav.navigate("students/$it") })
+        }
 
         composable("collection") {
-            CollectionScreen(vm, snap, session, onNew = { nav.navigate("collection/new/-1/-1") }, onReceipt = { nav.navigate("collection/receipt/$it") })
+            CollectionScreen(vm, snap, session, onNew = { nav.navigate("collection/new/-1?items=") }, onReceipt = { nav.navigate("collection/receipt/$it") })
         }
         composable(
-            "collection/new/{sid}/{seq}",
-            listOf(navArgument("sid") { type = NavType.LongType }, navArgument("seq") { type = NavType.IntType }),
+            "collection/new/{sid}?items={items}",
+            listOf(navArgument("sid") { type = NavType.LongType }, navArgument("items") { type = NavType.StringType; defaultValue = "" }),
         ) { e ->
             val sid = e.arguments?.getLong("sid") ?: -1L
-            val seq = e.arguments?.getInt("seq") ?: -1
-            CollectPaymentScreen(vm, snap, if (sid < 0) null else sid, if (seq < 0) null else seq, onBack = back, onSaved = { rid ->
-                nav.navigate("collection/receipt/$rid") { popUpTo("collection/new/{sid}/{seq}") { inclusive = true } }
+            val items = e.arguments?.getString("items").orEmpty().split(",").filter { it.isNotBlank() }
+            CollectPaymentScreen(vm, snap, if (sid < 0) null else sid, items, onBack = back, onSaved = { rid ->
+                nav.navigate("collection/receipt/$rid") { popUpTo("collection/new/{sid}?items={items}") { inclusive = true } }
             })
         }
         composable("collection/receipt/{rid}", listOf(navArgument("rid") { type = NavType.LongType })) { e ->
