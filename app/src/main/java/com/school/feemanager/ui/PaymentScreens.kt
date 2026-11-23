@@ -520,9 +520,9 @@ fun ReceiptScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, receipt
         if (r == null) { EmptyState("Receipt not found"); return@Column }
         val v = receiptView(snap, r)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Card(Modifier.widthIn(max = 560.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(2.dp)) {
+            Card(Modifier.widthIn(max = 560.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(2.dp)) {
                 Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(snap.settings.schoolName, style = MaterialTheme.typography.titleLarge, color = Navy, textAlign = TextAlign.Center)
+                    Text(snap.settings.schoolName, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
                     if (snap.settings.address.isNotBlank()) Text(snap.settings.address, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(6.dp))
                     Text(if (v.lines.size > 1) "OFFICIAL FEE RECEIPT (COMBINED)" else "OFFICIAL FEE RECEIPT", style = MaterialTheme.typography.titleSmall)

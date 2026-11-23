@@ -198,7 +198,7 @@ object DesktopScreens : TopScreens {
         Column(Modifier.fillMaxSize()) {
             DesktopPageHeader("Student Register (${list.size})") { if (session.isAdmin) PrimaryButton("+  Register student", nav::newStudent) }
             PageBody {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterRow {
                     SearchBox(query, { query = it }, "Search name, Enroll No. or Student ID", Modifier.width(380.dp))
                     SelectBox(listOf<String?>(null) + snap.card.classNames, cls, { it ?: "All classes" }, { cls = it })
                     SelectBox(listOf<StudentType?>(null) + StudentType.entries, type, { it?.label ?: "Day & Hostel" }, { type = it })
@@ -255,7 +255,7 @@ object DesktopScreens : TopScreens {
         Column(Modifier.fillMaxSize()) {
             DesktopPageHeader("Payments – Payables") { PrimaryButton("+  Collect payment", { nav.collect() }) }
             PageBody {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterRow {
                     SearchBox(query, { query = it }, "Search name, Enroll No. or Student ID", Modifier.width(380.dp))
                     SelectBox(listOf<String?>(null) + snap.card.classNames, cls, { it ?: "All classes" }, { cls = it })
                     SelectBox(listOf(null, PayStatus.OVERDUE, PayStatus.UNPAID, PayStatus.PARTIAL), status, { it?.label ?: "Any status" }, { status = it })
@@ -279,7 +279,7 @@ object DesktopScreens : TopScreens {
                         val keys = items.map { it.key }
                         val state = when { keys.all { it in sel } -> ToggleableState.On; keys.any { it in sel } -> ToggleableState.Indeterminate; else -> ToggleableState.Off }
                         item(key = "s$sid") {
-                            GridRow(background = Color(0xFFF7FAFD), onClick = { open[sid] = !isOpen }) {
+                            GridRow(background = School.GroupRow, onClick = { open[sid] = !isOpen }) {
                                 Cell(cols[0]) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(if (isOpen) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = if (isOpen) "Hide" else "Show", tint = School.Navy)
@@ -351,13 +351,13 @@ object DesktopScreens : TopScreens {
         val valid = list.filter { !it.voided }
         val cols = listOf(Col("", 0f, width = 56.dp), Col("Date", 0f, width = 118.dp), Col("Receipt No.", 0f, width = 170.dp), Col("Student", 1.1f), Col("Class", 0f, width = 82.dp), Col("Payment For", 1.6f),
             Col("Received By", 0f, width = 112.dp), Col("Amount", 0f, true, width = 118.dp), Col("", 0f, width = 88.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        FilterRow {
             SearchBox(query, { query = it }, "Receipt no., student name or ID", Modifier.width(300.dp))
             DateBox("From", from, { from = it })
             DateBox("To", to, { to = it })
             LinkText("Today", { from = snap.today; to = snap.today })
             LinkText("All dates", { from = null; to = null })
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(12.dp))
             Text("${valid.size} receipts · ${Money.mmk(valid.sumOf { it.total })}", style = MaterialTheme.typography.titleSmall, maxLines = 1, softWrap = false)
         }
         SelectionBar(sel.size, Money.mmk(sel.mapNotNull { snap.receiptById[it] }.filter { !it.voided }.sumOf { it.total }), "Combined receipt…", {
@@ -374,7 +374,7 @@ object DesktopScreens : TopScreens {
             items(list, key = { it.id }) { r ->
                 val on = r.id in sel
                 val classes = r.items.mapNotNull { snap.enrollment(it.enrollmentId)?.second?.enrollment?.className }.distinct().joinToString(", ")
-                GridRow(onClick = { nav.receipt(r.id) }, background = if (on) Color(0xFFEEF4FB) else Color.White) {
+                GridRow(onClick = { nav.receipt(r.id) }, background = if (on) School.SelectedRow else School.Surface) {
                     Cell(cols[0]) { Checkbox(on, { selected = if (on) sel - r.id else sel + r.id }, colors = CheckboxDefaults.colors(checkedColor = School.Navy)) }
                     TextCell(cols[1], r.date.fmt()); TextCell(cols[2], r.receiptNo); TextCell(cols[3], r.payerName); TextCell(cols[4], classes)
                     TextCell(cols[5], if (r.voided) "VOIDED – ${r.voidReason}" else r.items.joinToString(", ") { it.paymentFor }, color = if (r.voided) School.Red else School.Text)
@@ -429,7 +429,7 @@ object DesktopScreens : TopScreens {
                     Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                         pair.forEachIndexed { c, t ->
                             Row(
-                                Modifier.weight(1f).background(Color.White, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp))
+                                Modifier.weight(1f).background(School.Surface, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp))
                                     .clickable { nav.report(t) }.padding(horizontal = 22.dp, vertical = 20.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {

@@ -2,6 +2,7 @@ package com.school.feemanager.desktop.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -128,7 +129,14 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
 
             Panel("Fees by class") {
                 val w = listOf(0.72f, 0.95f, 0.95f, 0.95f, 0.95f, 0.95f, 1.02f, 1.05f, 0.47f, 0.9f)
-                Column(Modifier.border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
+                // the table keeps a usable width; it scrolls sideways at large scales
+                androidx.compose.foundation.layout.BoxWithConstraints {
+                val minW = 1180.dp
+                val boxW = maxWidth
+                val narrow = boxW < minW
+                val hs = androidx.compose.foundation.rememberScrollState()
+                Column(if (narrow) Modifier.horizontalScroll(hs) else Modifier) {
+                Column(Modifier.then(if (narrow) Modifier.width(minW) else Modifier).border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
                     Row(Modifier.fillMaxWidth().background(School.TableHeader, RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)).heightIn(min = 72.dp).padding(horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         listOf("Class", "A) Training", "C) Book Day–Myanmar", "Book Day–Intl", "Book Hostel–Myanmar", "Book Hostel–Intl", "D) Hostel fee", "Year starts", "Day", "Months")
@@ -152,6 +160,9 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
                         }
                         if (i < rows.lastIndex) HorizontalDivider(color = School.Line)
                     }
+                }
+                if (narrow) androidx.compose.foundation.HorizontalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(hs), Modifier.width(boxW).padding(top = 4.dp))
+                }
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -219,8 +230,8 @@ private fun RowScope.TableInput(value: String, onChange: (String) -> Unit, enabl
 @Composable
 private fun InputBox(value: String, onChange: (String) -> Unit, enabled: Boolean, numeric: Boolean, isError: Boolean, modifier: Modifier) {
     val shape = RoundedCornerShape(6.dp)
-    val border = when { isError -> School.Red; enabled -> Color(0xFFC6D0DB); else -> School.Line }
-    Box(modifier.height(46.dp).background(if (enabled) Color.White else Color(0xFFF6F8FB), shape).border(1.dp, border, shape).padding(horizontal = 12.dp),
+    val border = when { isError -> School.Red; enabled -> School.InputBorder; else -> School.Line }
+    Box(modifier.height(46.dp).background(if (enabled) School.Surface else School.InputDisabled, shape).border(1.dp, border, shape).padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart) {
         BasicTextField(value, onChange, enabled = enabled, singleLine = true, cursorBrush = SolidColor(School.Navy), modifier = Modifier.fillMaxWidth(),
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = if (enabled) School.Text else School.Muted, textAlign = if (numeric) TextAlign.End else TextAlign.Start))

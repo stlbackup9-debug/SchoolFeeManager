@@ -42,6 +42,9 @@ import com.school.feemanager.ui.LocalPlatform
 import com.school.feemanager.desktop.ui.AboutDialog
 import com.school.feemanager.desktop.ui.AppMenuBar
 import com.school.feemanager.desktop.ui.DesktopShell
+import com.school.feemanager.desktop.ui.DisplaySettingsDialog
+import com.school.feemanager.desktop.ui.DisplayState
+import com.school.feemanager.desktop.ui.LocalDisplay
 import com.school.feemanager.desktop.ui.MenuActions
 import com.school.feemanager.desktop.ui.SchoolDesktopTheme
 import com.school.feemanager.ui.LocalDesktop
@@ -73,6 +76,7 @@ fun main() {
     application {
         val vm = remember { AppViewModel(repo) }
         val actions = remember { MenuActions() }
+        val display = remember { DisplayState(File(dataDir(), "display.properties")) }
         val openData = { DesktopPlatform.openInSystem(dataDir()) }
         Window(
             onCloseRequest = ::exitApplication,
@@ -81,14 +85,15 @@ fun main() {
             state = rememberWindowState(size = DpSize(1400.dp, 900.dp)),
         ) {
             window.minimumSize = java.awt.Dimension(1100, 680)
-            AppMenuBar(actions, onOpenDataFolder = openData, onExit = ::exitApplication)
-            CompositionLocalProvider(LocalPlatform provides DesktopPlatform, LocalAwtFrame provides window, LocalDesktop provides true) {
+            AppMenuBar(actions, display, onOpenDataFolder = openData, onExit = ::exitApplication)
+            CompositionLocalProvider(LocalPlatform provides DesktopPlatform, LocalAwtFrame provides window, LocalDesktop provides true, LocalDisplay provides display) {
                 SchoolDesktopTheme {
                     DesktopFrame {
                         AppRoot(vm) { v, snap, session, busy, snackbar ->
                             DesktopShell(actions, v, snap, session, busy, snackbar, icon, APP_VERSION)
                         }
                         if (actions.showAbout) AboutDialog(APP_VERSION, dataDir().absolutePath, openData) { actions.showAbout = false }
+                        if (actions.showDisplay) DisplaySettingsDialog(display) { actions.showDisplay = false }
                     }
                 }
             }

@@ -169,7 +169,7 @@ fun AppRoot(vm: AppViewModel, shell: AppShell? = null) {
 @Composable
 private fun LoginFrame(modifier: Modifier, content: @Composable () -> Unit) {
     if (!LocalDesktop.current) { Box(modifier) { content() }; return }
-    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxSize().background(LocalBrandColor.current ?: MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
         Card(Modifier.widthIn(max = 460.dp).padding(24.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(8.dp)) {
             Box(Modifier.padding(12.dp)) { content() }
         }

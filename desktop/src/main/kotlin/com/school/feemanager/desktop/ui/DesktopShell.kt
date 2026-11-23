@@ -19,7 +19,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.DisplaySettings
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
@@ -77,6 +81,7 @@ class MenuActions {
     var isAdmin by mutableStateOf(false)
     var logout: () -> Unit = {}
     var showAbout by mutableStateOf(false)
+    var showDisplay by mutableStateOf(false)
 }
 
 /**
@@ -84,7 +89,7 @@ class MenuActions {
  * by Swing until the window is resized – and its items are enabled once someone is logged in.
  */
 @Composable
-fun FrameWindowScope.AppMenuBar(actions: MenuActions, onOpenDataFolder: () -> Unit, onExit: () -> Unit) {
+fun FrameWindowScope.AppMenuBar(actions: MenuActions, display: DisplayState, onOpenDataFolder: () -> Unit, onExit: () -> Unit) {
     val nav = actions.nav
     val on = nav != null
     MenuBar {
@@ -102,6 +107,13 @@ fun FrameWindowScope.AppMenuBar(actions: MenuActions, onOpenDataFolder: () -> Un
             ITEMS.forEach { i -> Item(i.label, enabled = on, onClick = { nav?.top(i.route) }, shortcut = KeyShortcut(i.key, ctrl = true)) }
             Separator()
             Item("Back", enabled = on, onClick = { nav?.back() }, shortcut = KeyShortcut(Key.DirectionLeft, alt = true))
+            Separator()
+            Item("Scale & layout, colour…", onClick = { actions.showDisplay = true }, shortcut = KeyShortcut(Key.Comma, ctrl = true))
+            CheckboxItem("Night mode", checked = display.settings.night, onCheckedChange = { n -> display.update { it.copy(night = n) } }, shortcut = KeyShortcut(Key.D, ctrl = true, shift = true))
+            CheckboxItem("Compact sidebar", checked = display.settings.compactSidebar, onCheckedChange = { c -> display.update { it.copy(compactSidebar = c) } })
+            Item("Make everything bigger", onClick = { display.zoom(+1) }, shortcut = KeyShortcut(Key.Equals, ctrl = true))
+            Item("Make everything smaller", onClick = { display.zoom(-1) }, shortcut = KeyShortcut(Key.Minus, ctrl = true))
+            Item("Normal size (100%)", onClick = { display.update { it.copy(scale = 1f, textSize = 1f) } }, shortcut = KeyShortcut(Key.Zero, ctrl = true))
         }
         Menu("Help", mnemonic = 'H') {
             Item("About School Fee Manager", onClick = { actions.showAbout = true })
@@ -142,7 +154,7 @@ fun DesktopShell(
     }
 
     Row(Modifier.fillMaxSize()) {
-        Sidebar(snap, session, route, logo, version, onSelect = { nav.top(it) }, onLogout = vm::logout)
+        Sidebar(snap, session, route, logo, version, onSelect = { nav.top(it) }, onLogout = vm::logout, onDisplay = { actions?.showDisplay = true })
         Box(Modifier.weight(1f).fillMaxHeight().background(School.Background)) {
             Column(Modifier.fillMaxSize()) {
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = School.Gold)
@@ -154,41 +166,74 @@ fun DesktopShell(
 }
 
 @Composable
-private fun Sidebar(snap: AppSnapshot, session: Session, route: String, logo: Painter?, version: String, onSelect: (String) -> Unit, onLogout: () -> Unit) {
-    Column(Modifier.width(240.dp).fillMaxHeight().background(School.Navy)) {
+private fun Sidebar(snap: AppSnapshot, session: Session, route: String, logo: Painter?, version: String, onSelect: (String) -> Unit, onLogout: () -> Unit, onDisplay: () -> Unit) {
+    val display = LocalDisplay.current
+    val compact = display?.settings?.compactSidebar == true
+    val on = School.OnSidebar
+    Column(Modifier.width(if (compact) 84.dp else 240.dp).fillMaxHeight().background(School.Sidebar)) {
         // school name + logo
-        Row(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 22.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (logo != null) Image(logo, contentDescription = null, modifier = Modifier.size(48.dp))
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(snap.settings.schoolName, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 22.sp)
-                Text("School Fee Manager", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+        Row(Modifier.fillMaxWidth().padding(horizontal = if (compact) 18.dp else 22.dp, vertical = 22.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (logo != null) Image(logo, contentDescription = snap.settings.schoolName, modifier = Modifier.size(48.dp))
+            if (!compact) {
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(snap.settings.schoolName, color = on, fontSize = 19.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 22.sp)
+                    Text("School Fee Manager", color = on.copy(alpha = 0.75f), fontSize = 14.sp)
+                }
             }
         }
-        Box(Modifier.fillMaxWidth().height(3.dp).padding(horizontal = 22.dp).background(School.Gold.copy(alpha = 0.85f)))
+        Box(Modifier.fillMaxWidth().height(3.dp).padding(horizontal = if (compact) 14.dp else 22.dp).background(School.Gold.copy(alpha = 0.85f)))
         Spacer(Modifier.height(18.dp))
         ITEMS.forEach { item ->
             val selected = route == item.route || route.startsWith(item.route + "/")
-            val bg = if (selected) Color.White else Color.Transparent
-            val fg = if (selected) School.Navy else Color.White
+            val bg = if (selected) School.SidebarSelected else Color.Transparent
+            val fg = if (selected) School.SidebarSelectedText else on
             Row(
                 Modifier.padding(horizontal = 12.dp, vertical = 3.dp).fillMaxWidth().height(54.dp)
-                    .background(bg, RoundedCornerShape(10.dp)).clickable { onSelect(item.route) }.padding(horizontal = 18.dp),
+                    .background(bg, RoundedCornerShape(10.dp)).clickable { onSelect(item.route) }.padding(horizontal = if (compact) 0.dp else 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (compact) Arrangement.Center else Arrangement.Start,
             ) {
-                Icon(item.icon, contentDescription = null, tint = if (selected) School.Navy else School.Gold, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(16.dp))
-                Text(item.label, color = fg, fontSize = 17.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                Icon(item.icon, contentDescription = item.label, tint = if (selected) School.SidebarSelectedText else School.Gold, modifier = Modifier.size(22.dp))
+                if (!compact) {
+                    Spacer(Modifier.width(16.dp))
+                    Text(item.label, color = fg, fontSize = 17.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                }
             }
         }
         Spacer(Modifier.weight(1f))
-        HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
-        Column(Modifier.padding(horizontal = 22.dp, vertical = 16.dp)) {
-            Text("${session.display} · ${session.role.label}", color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // Scale & Layout + night mode
+        val night = display?.settings?.night == true
+        val nightButton: @Composable () -> Unit = {
+            if (display != null) Box(
+                Modifier.size(44.dp).background(on.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).clickable { display.update { it.copy(night = !night) } },
+                contentAlignment = Alignment.Center,
+            ) { Icon(if (night) Icons.Default.LightMode else Icons.Default.DarkMode, contentDescription = if (night) "Day mode" else "Night mode", tint = School.Gold, modifier = Modifier.size(20.dp)) }
+        }
+        if (compact) Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(44.dp).background(on.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).clickable(onClick = onDisplay), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.DisplaySettings, contentDescription = "Scale & Layout", tint = School.Gold, modifier = Modifier.size(20.dp))
+            }
+            nightButton()
+        } else Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).height(44.dp).background(on.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).clickable(onClick = onDisplay).padding(horizontal = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.DisplaySettings, contentDescription = null, tint = School.Gold, modifier = Modifier.size(19.dp))
+                Spacer(Modifier.width(7.dp)); Text("Scale & Layout", color = on, fontSize = 14.sp, maxLines = 1, softWrap = false)
+            }
+            nightButton()
+        }
+        HorizontalDivider(color = on.copy(alpha = 0.15f))
+        if (compact) Column(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Log out", tint = on, modifier = Modifier.size(22.dp).clickable(onClick = onLogout))
+        } else Column(Modifier.padding(horizontal = 22.dp, vertical = 16.dp)) {
+            Text("${session.display} · ${session.role.label}", color = on, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Text("Log out", color = Color.White, fontSize = 15.sp, textDecoration = TextDecoration.Underline, modifier = Modifier.clickable(onClick = onLogout))
+            Text("Log out", color = on, fontSize = 15.sp, textDecoration = TextDecoration.Underline, modifier = Modifier.clickable(onClick = onLogout))
             Spacer(Modifier.height(8.dp))
-            Text("Version $version", color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+            Text("Version $version", color = on.copy(alpha = 0.55f), fontSize = 12.sp)
         }
     }
 }

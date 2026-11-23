@@ -5,6 +5,8 @@ package com.school.feemanager.desktop.ui
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,59 +81,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-// ================================================================ school theme
-object School {
-    val Navy = Color(0xFF1F4E79)
-    val NavyDark = Color(0xFF173B5C)
-    val Gold = Color(0xFFE2B33C)
-    val Background = Color(0xFFF3F6FA)
-    val TableHeader = Color(0xFFDDE9F5)
-    val Line = Color(0xFFDCE3EB)
-    val Text = Color(0xFF1E2A36)
-    val Muted = Color(0xFF5C6B7A)
-    val Green = Color(0xFF2E7D32)
-    val Red = Color(0xFFC62828)
-    val Amber = Color(0xFFB7791F)
-    val Blue = Color(0xFF2F6FB0)
-}
-
-private val desktopColors: ColorScheme = lightColorScheme(
-    primary = School.Navy,
-    onPrimary = Color.White,
-    primaryContainer = School.TableHeader,
-    onPrimaryContainer = School.Navy,
-    secondary = School.Blue,
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE8F1FA),
-    onSecondaryContainer = School.Navy,
-    tertiary = School.Gold,
-    background = School.Background,
-    onBackground = School.Text,
-    surface = Color.White,
-    onSurface = School.Text,
-    surfaceVariant = Color(0xFFEEF2F7),
-    onSurfaceVariant = School.Muted,
-    outline = Color(0xFFC3CCD6),
-    outlineVariant = School.Line,
-    error = School.Red,
-)
-
-private val desktopType = Typography(
-    headlineSmall = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
-    titleLarge = TextStyle(fontSize = 21.sp, fontWeight = FontWeight.SemiBold),
-    titleMedium = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
-    titleSmall = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
-    bodyLarge = TextStyle(fontSize = 16.sp),
-    bodyMedium = TextStyle(fontSize = 15.sp),
-    bodySmall = TextStyle(fontSize = 13.sp),
-    labelLarge = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium),
-    labelMedium = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium),
-    labelSmall = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium),
-)
-
-@Composable
-fun SchoolDesktopTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = desktopColors, typography = desktopType, content = content)
-
 // ================================================================ page layout
 /** Page body under the header: background colour and the standard padding. */
 @Composable
@@ -142,7 +91,7 @@ fun PageBody(modifier: Modifier = Modifier, content: @Composable ColumnScope.() 
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, enabled: Boolean = true, modifier: Modifier = Modifier) {
     Button(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(8.dp), modifier = modifier.height(44.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = School.Navy, disabledContainerColor = School.Navy.copy(alpha = 0.35f), disabledContentColor = Color.White),
+        colors = ButtonDefaults.buttonColors(containerColor = School.Button, contentColor = School.OnButton, disabledContainerColor = School.Button.copy(alpha = 0.35f), disabledContentColor = School.OnButton.copy(alpha = 0.8f)),
         contentPadding = PaddingValues(horizontal = 20.dp)) { Text(text, style = MaterialTheme.typography.labelLarge) }
 }
 
@@ -157,12 +106,21 @@ fun LinkText(text: String, onClick: () -> Unit, color: Color = School.Blue) {
     Text(text, color = color, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 2.dp))
 }
 
+/** A row of filters that wraps onto the next line when the window is narrow or the scale is large. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun FilterRow(content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) { content() }
+}
+
 // ================================================================ filter controls (48 dp, like Windows forms)
 private val boxShape = RoundedCornerShape(6.dp)
 
 @Composable
 private fun FieldBox(modifier: Modifier, content: @Composable RowScope.() -> Unit) {
-    Row(modifier.height(46.dp).background(Color.White, boxShape).border(1.dp, Color(0xFFC6D0DB), boxShape).padding(horizontal = 12.dp),
+    Row(modifier.height(46.dp).background(School.Surface, boxShape).border(1.dp, School.InputBorder, boxShape).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically, content = content)
 }
 
@@ -172,7 +130,7 @@ fun SearchBox(value: String, onChange: (String) -> Unit, placeholder: String, mo
         Icon(Icons.Default.Search, contentDescription = null, tint = School.Muted, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            if (value.isEmpty()) Text(placeholder, color = Color(0xFF8A97A6), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+            if (value.isEmpty()) Text(placeholder, color = School.Placeholder, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
             BasicTextField(value, onChange, singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = School.Text), cursorBrush = SolidColor(School.Navy), modifier = Modifier.fillMaxWidth())
         }
     }
@@ -183,7 +141,7 @@ fun <T> SelectBox(options: List<T>, selected: T, label: (T) -> String, onSelect:
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         FieldBox(Modifier.clickable { open = true }) {
-            Text(label(selected), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Text(label(selected), style = MaterialTheme.typography.bodyLarge, color = School.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
             Spacer(Modifier.width(4.dp))
             Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = School.Text)
         }
@@ -197,10 +155,10 @@ fun <T> SelectBox(options: List<T>, selected: T, label: (T) -> String, onSelect:
 fun DateBox(label: String, date: LocalDate?, onChange: (LocalDate?) -> Unit, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = School.Text)
         Spacer(Modifier.width(8.dp))
         FieldBox(Modifier.width(158.dp).clickable { open = true }) {
-            Text(date?.fmt() ?: "dd-MMM-yyyy", color = if (date == null) Color(0xFF8A97A6) else School.Text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Text(date?.fmt() ?: "dd-MMM-yyyy", color = if (date == null) School.Placeholder else School.Text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = School.Text, modifier = Modifier.size(20.dp))
         }
     }
@@ -222,7 +180,7 @@ fun DateBox(label: String, date: LocalDate?, onChange: (LocalDate?) -> Unit, mod
 fun CheckLabel(text: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.clickable { onChange(!checked) }.padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked, onChange, colors = CheckboxDefaults.colors(checkedColor = School.Navy))
-        Text(text, style = MaterialTheme.typography.bodyLarge)
+        Text(text, style = MaterialTheme.typography.bodyLarge, color = School.Text, maxLines = 1, softWrap = false)
     }
 }
 
@@ -238,7 +196,7 @@ fun StatusPill(s: PayStatus) {
 /** White card with a coloured edge on the left (dashboard figures). */
 @Composable
 fun AccentCard(label: String, value: String, accent: Color, modifier: Modifier = Modifier, extra: String? = null) {
-    Row(modifier.height(IntrinsicSize.Min).background(Color.White, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
+    Row(modifier.height(IntrinsicSize.Min).background(School.Surface, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
         Box(Modifier.width(5.dp).fillMaxHeight().background(accent, RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp)))
         Column(Modifier.padding(horizontal = 22.dp, vertical = 18.dp)) {
             Text(label, style = MaterialTheme.typography.bodyLarge, color = School.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -253,7 +211,7 @@ fun AccentCard(label: String, value: String, accent: Color, modifier: Modifier =
 
 @Composable
 fun Panel(title: String?, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Column(modifier.background(Color.White, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp)).padding(24.dp)) {
+    Column(modifier.background(School.Surface, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp)).padding(24.dp)) {
         if (title != null) { Text(title, style = MaterialTheme.typography.titleMedium, color = School.Navy); Spacer(Modifier.height(14.dp)) }
         content()
     }
@@ -262,7 +220,7 @@ fun Panel(title: String?, modifier: Modifier = Modifier, content: @Composable ()
 /** "0 selected  0 MMK  [action] [Clear selection]" bar above a table. */
 @Composable
 fun SelectionBar(count: Int, amount: String, actionLabel: String, onAction: () -> Unit, onClear: () -> Unit, extra: @Composable RowScope.() -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().background(Color(0xFFE9EFF6), RoundedCornerShape(8.dp)).padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().background(School.SelectionBar, RoundedCornerShape(8.dp)).padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("$count selected", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.width(14.dp))
         Text(amount, style = MaterialTheme.typography.bodyLarge)
@@ -307,9 +265,9 @@ fun RowScope.TextCell(col: Col, text: String, color: Color = School.Text, bold: 
 }
 
 @Composable
-fun GridRow(modifier: Modifier = Modifier, background: Color = Color.White, onClick: (() -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
+fun GridRow(modifier: Modifier = Modifier, background: Color = Color.Unspecified, onClick: (() -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
     Column {
-        Row(modifier.fillMaxWidth().background(background).let { if (onClick != null) it.clickable(onClick = onClick) else it }.heightIn(min = 52.dp).padding(horizontal = 4.dp),
+        Row(modifier.fillMaxWidth().background(if (background == Color.Unspecified) School.Surface else background).let { if (onClick != null) it.clickable(onClick = onClick) else it }.heightIn(min = 52.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically, content = content)
         HorizontalDivider(color = School.Line)
     }
@@ -334,7 +292,13 @@ fun DataGrid(
     BoxWithConstraints(modifier) {
         val reserved = 50.dp + (if (footer != null) 50.dp else 0.dp) + (if (empty != null) 70.dp else 0.dp)
         val bodyMax = if (maxHeight == Dp.Infinity) 2000.dp else (maxHeight - reserved).coerceAtLeast(60.dp)
-        Column(Modifier.background(Color.White, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
+        // Never squeeze columns away: below their minimum width the table scrolls sideways (large scale / small window).
+        val minW = cols.fold(24.dp) { acc, c -> acc + (c.width ?: (150.dp * c.weight).coerceAtLeast(90.dp)) }
+        val boxW = maxWidth
+        val narrow = boxW != Dp.Infinity && boxW < minW
+        val hScroll = rememberScrollState()
+        Column(if (narrow) Modifier.horizontalScroll(hScroll) else Modifier) {
+        Column(Modifier.then(if (narrow) Modifier.width(minW) else Modifier).background(School.Surface, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
             Row(Modifier.fillMaxWidth().background(School.TableHeader, RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)).height(50.dp).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (header != null) header() else cols.forEach { c -> TextCell(c, c.title, color = School.Navy, bold = true) }
@@ -347,8 +311,10 @@ fun DataGrid(
                 VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.TopEnd).height(bodyHeight))
             }
             if (empty != null) Text(empty, color = School.Muted, modifier = Modifier.padding(24.dp))
-            if (footer != null) Row(Modifier.fillMaxWidth().background(Color(0xFFF1F4F8), RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)).height(50.dp).padding(horizontal = 4.dp),
+            if (footer != null) Row(Modifier.fillMaxWidth().background(School.Footer, RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)).height(50.dp).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically, content = footer)
+        }
+        if (narrow) androidx.compose.foundation.HorizontalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(hScroll), Modifier.width(boxW).padding(top = 4.dp))
         }
     }
 }

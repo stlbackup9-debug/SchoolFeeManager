@@ -76,6 +76,9 @@ fun LocalDate.fmt(): String = format(DATE_FMT)
 /** True in the Windows app: page headers and frames use the desktop style. */
 val LocalDesktop = androidx.compose.runtime.staticCompositionLocalOf { false }
 
+/** Deep brand colour for large areas (login background); the Windows app sets it from the chosen colour / night mode. */
+val LocalBrandColor = androidx.compose.runtime.compositionLocalOf<Color?> { null }
+
 @Composable
 fun AppTopBar(title: String, onBack: (() -> Unit)? = null, actions: @Composable () -> Unit = {}) {
     if (LocalDesktop.current) { DesktopPageHeader(title, onBack, actions); return }

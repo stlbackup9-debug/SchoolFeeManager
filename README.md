@@ -35,6 +35,7 @@ The same app for Windows 10/11 (64-bit), built from the same source code (screen
 * **Data:** `%APPDATA%\SchoolFeeManager\school_fees.db` – kept when updating or uninstalling. The database format is identical to the phone's: a backup made on the phone (*Settings → Data → Back up now*) can be restored on the PC and vice versa (a 1.0 phone backup is upgraded automatically).
 * **Printing / PDF:** receipts and reports open in the default browser with its print dialog (choose a printer or *Microsoft Print to PDF*). Report *PDF* export writes a PDF file directly.
 * **Desktop layout:** school-blue sidebar (Dashboard, Students, Payments, Collection, Reports, Settings), File / View / Help menu bar, wide tables with filters, Tab between fields and Enter to log in, keyboard shortcuts (Ctrl+1…6 pages, Ctrl+P collect payment, Ctrl+N register student, Alt+← back).
+* **Scale & Layout** (sidebar button, or View menu / Ctrl+,): size of everything (80–200 %), text size, full or compact sidebar, 7 school colours, Day / Night mode. Applied at once and remembered in `%APPDATA%\SchoolFeeManager\display.properties`. Ctrl+= / Ctrl+– / Ctrl+0 change the size; Ctrl+Shift+D toggles night mode.
 * A Java runtime is included (OpenJDK 25 from the `jdk4py` package; licences in `runtime\legal`) – nothing else to install.
 
 Build it (Linux or Windows, needs [NSIS](https://nsis.sourceforge.io) `makensis` on the PATH):
