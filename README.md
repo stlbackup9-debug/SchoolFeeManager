@@ -11,7 +11,7 @@ Kotlin · Jetpack Compose (Material 3) · MVVM · Room (SQLite) · min Android 8
 
 ## Building the APK
 
-> **Status:** the business logic (fees, schedules, balances, reports, Excel import/export) is compiled and tested – 18/18 unit tests pass, and 550/550 values match the workbook. The Android app itself has **not yet been compiled**: the build machine had no access to Google's Android repositories. Building it takes one step in Android Studio:
+> **Status:** the app compiles cleanly (`assembleDebug` / `assembleRelease`, no compiler warnings, no lint errors) and all 18 unit tests pass; 550/550 values match the workbook. To build it yourself in Android Studio:
 
 1. Install **Android Studio** (Ladybug 2024.2 or newer) – https://developer.android.com/studio
 2. *File → Open* and choose this `SchoolFeeManager` folder. Let Gradle sync (needs internet the first time, ~5–10 min).
