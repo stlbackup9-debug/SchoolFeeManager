@@ -45,7 +45,7 @@ import com.school.feemanager.domain.Reports
 import com.school.feemanager.io.HtmlDocs
 import java.time.LocalDate
 
-private fun ReportType.description(): String = when (this) {
+fun ReportType.description(): String = when (this) {
     ReportType.ENROLLMENT -> "Every class enrollment: Enroll No., class, academic year, start, period, term"
     ReportType.FEE_ASSESSMENT -> "Fee breakdown per class enrollment: training to net total"
     ReportType.OUTSTANDING -> "Class enrollments that still owe money"

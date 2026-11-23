@@ -2,15 +2,22 @@ package com.school.feemanager.desktop
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.DpSize
@@ -32,7 +39,12 @@ import com.school.feemanager.ui.AppViewModel
 import com.school.feemanager.ui.DesktopPlatform
 import com.school.feemanager.ui.LocalAwtFrame
 import com.school.feemanager.ui.LocalPlatform
-import com.school.feemanager.ui.theme.SchoolFeeTheme
+import com.school.feemanager.desktop.ui.AboutDialog
+import com.school.feemanager.desktop.ui.AppMenuBar
+import com.school.feemanager.desktop.ui.DesktopShell
+import com.school.feemanager.desktop.ui.MenuActions
+import com.school.feemanager.desktop.ui.SchoolDesktopTheme
+import com.school.feemanager.ui.LocalDesktop
 import java.io.File
 import javax.imageio.ImageIO
 import javax.swing.JOptionPane
@@ -49,6 +61,8 @@ fun dataDir(): File {
 }
 
 fun main() {
+    // Menus and message boxes in the Windows style (the screens themselves are drawn by the app).
+    try { javax.swing.UIManager.setLookAndFeel(javax.swing.UIManager.getSystemLookAndFeelClassName()) } catch (_: Exception) {}
     val repo = try {
         FeeRepository(JdbcFeeStore(File(dataDir(), "school_fees.db")))
     } catch (e: Exception) {
@@ -58,15 +72,25 @@ fun main() {
     val icon = DesktopPlatform::class.java.getResourceAsStream("/icon.png")?.use { BitmapPainter(ImageIO.read(it).toComposeImageBitmap()) }
     application {
         val vm = remember { AppViewModel(repo) }
+        val actions = remember { MenuActions() }
+        val openData = { DesktopPlatform.openInSystem(dataDir()) }
         Window(
             onCloseRequest = ::exitApplication,
-            title = "$APP_NAME $APP_VERSION",
+            title = APP_NAME,
             icon = icon,
-            state = rememberWindowState(size = DpSize(1180.dp, 860.dp)),
+            state = rememberWindowState(size = DpSize(1400.dp, 900.dp)),
         ) {
-            window.minimumSize = java.awt.Dimension(420, 560)
-            CompositionLocalProvider(LocalPlatform provides DesktopPlatform, LocalAwtFrame provides window) {
-                SchoolFeeTheme { DesktopFrame { AppRoot(vm) } }
+            window.minimumSize = java.awt.Dimension(1100, 680)
+            AppMenuBar(actions, onOpenDataFolder = openData, onExit = ::exitApplication)
+            CompositionLocalProvider(LocalPlatform provides DesktopPlatform, LocalAwtFrame provides window, LocalDesktop provides true) {
+                SchoolDesktopTheme {
+                    DesktopFrame {
+                        AppRoot(vm) { v, snap, session, busy, snackbar ->
+                            DesktopShell(actions, v, snap, session, busy, snackbar, icon, APP_VERSION)
+                        }
+                        if (actions.showAbout) AboutDialog(APP_VERSION, dataDir().absolutePath, openData) { actions.showAbout = false }
+                    }
+                }
             }
         }
     }
@@ -79,13 +103,18 @@ private class AppOwner : LifecycleOwner, ViewModelStoreOwner {
     override val viewModelStore = ViewModelStore()
 }
 
-/** The screens are designed for a phone/tablet width; on a wide window they are centred. */
+/** Provides the lifecycle / ViewModel owners the shared screens expect, and Windows-style Tab / Shift+Tab between fields. */
 @Composable
 fun DesktopFrame(content: @Composable () -> Unit) {
     val owner = remember { AppOwner() }
+    val focus = LocalFocusManager.current
     CompositionLocalProvider(LocalLifecycleOwner provides owner, LocalViewModelStoreOwner provides owner) {
-        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.TopCenter) {
-            Box(Modifier.fillMaxHeight().widthIn(max = 1000.dp).background(MaterialTheme.colorScheme.background)) { content() }
-        }
+        Box(
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).onPreviewKeyEvent { e ->
+                if (e.key == Key.Tab && e.type == KeyEventType.KeyDown && !e.isCtrlPressed && !e.isAltPressed) {
+                    focus.moveFocus(if (e.isShiftPressed) FocusDirection.Previous else FocusDirection.Next); true
+                } else false
+            },
+        ) { content() }
     }
 }

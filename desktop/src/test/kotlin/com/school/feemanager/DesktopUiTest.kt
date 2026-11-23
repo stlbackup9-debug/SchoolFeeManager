@@ -76,7 +76,7 @@ class DesktopUiTest {
     private fun ComposeUiTest.first(text: String, substring: Boolean = false): SemanticsNodeInteraction =
         onAllNodesWithText(text, substring = substring)[0]
 
-    @Test fun mainFlow() = runDesktopComposeUiTest(1100, 820) {
+    @Test fun mainFlow() = runDesktopComposeUiTest(1400, 900) {
         val store = JdbcFeeStore(File(tmp.root, "ui.db"))
         val repo = FeeRepository(store)
         val today = LocalDate.now()
@@ -100,7 +100,15 @@ class DesktopUiTest {
             override fun restartApp() {}
         }
         setContent {
-            CompositionLocalProvider(LocalPlatform provides platform) { SchoolFeeTheme { DesktopFrame { AppRoot(vm) } } }
+            CompositionLocalProvider(LocalPlatform provides platform, com.school.feemanager.ui.LocalDesktop provides true) {
+                com.school.feemanager.desktop.ui.SchoolDesktopTheme {
+                    DesktopFrame {
+                        AppRoot(vm) { v, snap, session, busy, snackbar ->
+                            com.school.feemanager.desktop.ui.DesktopShell(null, v, snap, session, busy, snackbar, null, "1.1.0")
+                        }
+                    }
+                }
+            }
         }
 
         waitText("Log in")
@@ -118,13 +126,16 @@ class DesktopUiTest {
         waitText("Classes (2)")
         shot("04-student-detail")
 
-        first("Payables").performClick()
-        waitText("payable item(s)", substring = true)
+        first("Payments").performClick()
+        waitText("Payments – Payables")
         shot("05-payables")
-        // tick two items of Aung Aung (two classes) → one combined receipt
-        onAllNodes(isToggleable())[1].performClick()
-        onAllNodes(isToggleable())[2].performClick()
-        waitText("Pay selected")
+        // find Aung Aung, open the row, select all his items (two classes) and pay them on one receipt
+        onAllNodes(hasSetTextAction())[0].performTextInput("Aung")
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Su Su").fetchSemanticsNodes().isEmpty() }
+        first("Aung Aung").performClick()
+        waitText("Installment 1", substring = true)
+        first("Select all shown").performClick()
+        waitText("9 selected")
         shot("06-payables-selected")
         first("Pay selected").performClick()
         waitText("Save & Receipt")
@@ -140,7 +151,13 @@ class DesktopUiTest {
 
         first("Collection").performClick()
         waitText("Cash Collection")
+        // tick both receipts and print them as one combined document
+        onAllNodes(isToggleable())[1].performClick()
+        onAllNodes(isToggleable())[2].performClick()
+        waitText("2 selected")
         shot("10-collection")
+        first("Combined receipt…").performClick()
+        assertEquals(2, printed.size)
 
         first("Reports").performClick()
         waitText("Payment Schedule Report", substring = true)

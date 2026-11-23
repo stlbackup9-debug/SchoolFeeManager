@@ -2,6 +2,11 @@
 
 package com.school.feemanager.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +17,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -70,8 +79,53 @@ private val TABS = listOf(
     Tab("settings", "Settings", Icons.Default.Settings),
 )
 
+/** Navigation actions shared by every screen (phone and Windows). */
+class AppNav(val controller: NavHostController) {
+    fun top(route: String) = controller.navigate(route) {
+        popUpTo(controller.graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+    fun student(id: Long) = controller.navigate("students/$id")
+    fun newStudent() = controller.navigate("students/edit/-1")
+    /** Collect payment; [items] are payable keys "enrollmentId:seq" (empty = choose). */
+    fun collect(studentId: Long? = null, items: List<String> = emptyList()) = controller.navigate("collection/new/${studentId ?: -1}?items=${items.joinToString(",")}")
+    fun receipt(id: Long) = controller.navigate("collection/receipt/$id")
+    fun report(type: ReportType) = controller.navigate("reports/${type.name}")
+    fun settings(sub: String) = controller.navigate("settings/$sub")
+    fun back() = controller.popBackStack()
+}
+
+/**
+ * The five top-level pages. The phone uses [MobileScreens]; the Windows app supplies wide,
+ * table-based layouts. Everything else (forms, student page, receipt, report view, settings) is shared.
+ */
+interface TopScreens {
+    @Composable fun Dashboard(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
+    @Composable fun Students(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
+    @Composable fun Payables(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
+    @Composable fun Collection(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
+    @Composable fun Reports(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav)
+}
+
+object MobileScreens : TopScreens {
+    @Composable override fun Dashboard(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) =
+        DashboardScreen(snap, onStudent = nav::student, onReceipt = nav::receipt)
+    @Composable override fun Students(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) =
+        StudentsScreen(snap, session, onOpen = nav::student, onAdd = nav::newStudent)
+    @Composable override fun Payables(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) =
+        PayablesScreen(snap, onPay = { nav.collect(null, it) }, onStudent = nav::student)
+    @Composable override fun Collection(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) =
+        CollectionScreen(vm, snap, session, onNew = { nav.collect() }, onReceipt = nav::receipt)
+    @Composable override fun Reports(vm: AppViewModel, snap: AppSnapshot, session: Session, nav: AppNav) =
+        ReportsScreen(onOpen = nav::report)
+}
+
+/** The app frame after login: bottom navigation on the phone; the Windows app passes its own (sidebar + menu bar). */
+typealias AppShell = @Composable (vm: AppViewModel, snap: AppSnapshot, session: Session, busy: Boolean, snackbar: SnackbarHostState) -> Unit
+
 @Composable
-fun AppRoot(vm: AppViewModel) {
+fun AppRoot(vm: AppViewModel, shell: AppShell? = null) {
     val session by vm.session.collectAsStateWithLifecycle()
     val snap by vm.snapshot.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
@@ -86,11 +140,27 @@ fun AppRoot(vm: AppViewModel) {
     val data = snap
     when {
         data == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        s == null -> Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { pad -> LoginScreen(vm, data, busy, Modifier.padding(pad)) }
-        s.mustChangePassword -> Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = { AppTopBar("Change Password") }) { pad ->
-            Box(Modifier.padding(pad)) { ChangePasswordForm(vm, forced = true, onDone = {}) }
+        s == null -> Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { pad -> LoginFrame(Modifier.padding(pad)) { LoginScreen(vm, data, busy, Modifier) } }
+        s.mustChangePassword -> Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = { if (!LocalDesktop.current) AppTopBar("Change Password") }) { pad ->
+            LoginFrame(Modifier.padding(pad)) {
+                Column {
+                    if (LocalDesktop.current) Text("Change Password", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 16.dp, top = 16.dp))
+                    ChangePasswordForm(vm, forced = true, onDone = {})
+                }
+            }
         }
-        else -> MainScaffold(vm, data, s, busy, snackbar)
+        else -> if (shell != null) shell(vm, data, s, busy, snackbar) else MainScaffold(vm, data, s, busy, snackbar)
+    }
+}
+
+/** On Windows the login sits in a card on the school-blue background; on the phone it fills the screen. */
+@Composable
+private fun LoginFrame(modifier: Modifier, content: @Composable () -> Unit) {
+    if (!LocalDesktop.current) { Box(modifier) { content() }; return }
+    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+        Card(Modifier.widthIn(max = 460.dp).padding(24.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(8.dp)) {
+            Box(Modifier.padding(12.dp)) { content() }
+        }
     }
 }
 
@@ -98,20 +168,26 @@ fun AppRoot(vm: AppViewModel) {
 private fun LoginScreen(vm: AppViewModel, snap: AppSnapshot, busy: Boolean, modifier: Modifier) {
     var user by rememberSaveable { mutableStateOf("") }
     var pass by rememberSaveable { mutableStateOf("") }
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(if (LocalDesktop.current) modifier else modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 420.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(Icons.Default.School, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(56.dp))
             Text(snap.settings.schoolName, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
             Text("School Fee Management System", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(user, { user = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            val focus = LocalFocusManager.current
+            val canLogin = !busy && user.isNotBlank() && pass.isNotEmpty()
+            val doLogin = { if (canLogin) { vm.login(user, pass); pass = "" } }
+            // Enter moves to the password, Enter there logs in (phone keyboard and PC keyboard)
+            OutlinedTextField(user, { user = it.replace("\n", "").replace("\t", "") }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }))
             OutlinedTextField(
-                pass, { pass = it }, label = { Text("Password") }, singleLine = true,
+                pass, { pass = it.replace("\n", "").replace("\t", "") }, label = { Text("Password") }, singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { doLogin() }),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Button(onClick = { vm.login(user, pass); pass = "" }, enabled = !busy && user.isNotBlank() && pass.isNotEmpty(), modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            Button(onClick = doLogin, enabled = canLogin, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Text("Log in")
             }
             if (snap.users.size == 1 && snap.users[0].mustChangePassword) {
@@ -151,36 +227,47 @@ private fun MainScaffold(vm: AppViewModel, snap: AppSnapshot, session: Session, 
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            AppNavHost(nav, vm, snap, session)
+            AppNavHost(AppNav(nav), vm, snap, session)
         }
     }
 }
 
+/** On Windows, form-style pages are kept to a readable width in the middle of the window. */
 @Composable
-private fun AppNavHost(nav: NavHostController, vm: AppViewModel, snap: AppSnapshot, session: Session) {
-    val back: () -> Unit = { nav.popBackStack() }
-    NavHost(nav, startDestination = "dashboard") {
-        composable("dashboard") { DashboardScreen(snap, onStudent = { nav.navigate("students/$it") }, onReceipt = { nav.navigate("collection/receipt/$it") }) }
+fun PageFrame(content: @Composable () -> Unit) {
+    if (!LocalDesktop.current) { content(); return }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.fillMaxHeight().widthIn(max = 1100.dp)) { content() }
+    }
+}
 
-        composable("students") {
-            StudentsScreen(snap, session, onOpen = { nav.navigate("students/$it") }, onAdd = { nav.navigate("students/edit/-1") })
-        }
+@Composable
+fun AppNavHost(nav: AppNav, vm: AppViewModel, snap: AppSnapshot, session: Session, screens: TopScreens = MobileScreens) {
+    val c = nav.controller
+    val back: () -> Unit = { c.popBackStack() }
+    NavHost(c, startDestination = "dashboard") {
+        composable("dashboard") { screens.Dashboard(vm, snap, session, nav) }
+        composable("students") { screens.Students(vm, snap, session, nav) }
         composable("students/{id}", listOf(navArgument("id") { type = NavType.LongType })) { e ->
             val id = e.arguments?.getLong("id") ?: -1L
-            StudentDetailScreen(
-                vm, snap, session, id, onBack = back,
-                onEdit = { nav.navigate("students/edit/$id") },
-                onAddClass = { nav.navigate("students/$id/class/-1") },
-                onEditClass = { eid -> nav.navigate("students/$id/class/$eid") },
-                onPay = { items -> nav.navigate("collection/new/$id?items=${items.joinToString(",")}") },
-                onReceipt = { nav.navigate("collection/receipt/$it") },
-            )
+            PageFrame {
+                StudentDetailScreen(
+                    vm, snap, session, id, onBack = back,
+                    onEdit = { c.navigate("students/edit/$id") },
+                    onAddClass = { c.navigate("students/$id/class/-1") },
+                    onEditClass = { eid -> c.navigate("students/$id/class/$eid") },
+                    onPay = { items -> nav.collect(id, items) },
+                    onReceipt = nav::receipt,
+                )
+            }
         }
         composable("students/edit/{id}", listOf(navArgument("id") { type = NavType.LongType })) { e ->
             val id = e.arguments?.getLong("id") ?: -1L
-            StudentEditScreen(vm, snap, if (id < 0) null else id, onBack = back, onSaved = { newId ->
-                nav.navigate("students/$newId") { popUpTo("students") }
-            })
+            PageFrame {
+                StudentEditScreen(vm, snap, if (id < 0) null else id, onBack = back, onSaved = { newId ->
+                    c.navigate("students/$newId") { popUpTo("students") }
+                })
+            }
         }
         composable(
             "students/{id}/class/{eid}",
@@ -188,44 +275,41 @@ private fun AppNavHost(nav: NavHostController, vm: AppViewModel, snap: AppSnapsh
         ) { e ->
             val id = e.arguments?.getLong("id") ?: -1L
             val eid = e.arguments?.getLong("eid") ?: -1L
-            EnrollmentEditScreen(vm, snap, id, if (eid < 0) null else eid, onBack = back, onSaved = back)
+            PageFrame { EnrollmentEditScreen(vm, snap, id, if (eid < 0) null else eid, onBack = back, onSaved = back) }
         }
 
-        composable("payments") {
-            PayablesScreen(snap, onPay = { items -> nav.navigate("collection/new/-1?items=${items.joinToString(",")}") }, onStudent = { nav.navigate("students/$it") })
-        }
-
-        composable("collection") {
-            CollectionScreen(vm, snap, session, onNew = { nav.navigate("collection/new/-1?items=") }, onReceipt = { nav.navigate("collection/receipt/$it") })
-        }
+        composable("payments") { screens.Payables(vm, snap, session, nav) }
+        composable("collection") { screens.Collection(vm, snap, session, nav) }
         composable(
             "collection/new/{sid}?items={items}",
             listOf(navArgument("sid") { type = NavType.LongType }, navArgument("items") { type = NavType.StringType; defaultValue = "" }),
         ) { e ->
             val sid = e.arguments?.getLong("sid") ?: -1L
             val items = e.arguments?.getString("items").orEmpty().split(",").filter { it.isNotBlank() }
-            CollectPaymentScreen(vm, snap, if (sid < 0) null else sid, items, onBack = back, onSaved = { rid ->
-                nav.navigate("collection/receipt/$rid") { popUpTo("collection/new/{sid}?items={items}") { inclusive = true } }
-            })
+            PageFrame {
+                CollectPaymentScreen(vm, snap, if (sid < 0) null else sid, items, onBack = back, onSaved = { rid ->
+                    c.navigate("collection/receipt/$rid") { popUpTo("collection/new/{sid}?items={items}") { inclusive = true } }
+                })
+            }
         }
         composable("collection/receipt/{rid}", listOf(navArgument("rid") { type = NavType.LongType })) { e ->
-            ReceiptScreen(vm, snap, session, e.arguments?.getLong("rid") ?: -1L, onBack = back)
+            PageFrame { ReceiptScreen(vm, snap, session, e.arguments?.getLong("rid") ?: -1L, onBack = back) }
         }
 
-        composable("reports") { ReportsScreen(onOpen = { nav.navigate("reports/${it.name}") }) }
+        composable("reports") { screens.Reports(vm, snap, session, nav) }
         composable("reports/{type}") { e ->
             val type = ReportType.entries.firstOrNull { it.name == e.arguments?.getString("type") } ?: ReportType.ENROLLMENT
             ReportViewScreen(vm, snap, type, onBack = back)
         }
 
-        composable("settings") { SettingsScreen(vm, snap, session, onOpen = { nav.navigate("settings/$it") }) }
-        composable("settings/rates") { FeeRatesScreen(vm, snap, session, onBack = back) }
-        composable("settings/school") { SchoolProfileScreen(vm, snap, session, onBack = back) }
-        composable("settings/users") { UsersScreen(vm, snap, session, onBack = back) }
-        composable("settings/data") { DataScreen(vm, snap, session, onBack = back) }
+        composable("settings") { PageFrame { SettingsScreen(vm, snap, session, onOpen = nav::settings) } }
+        composable("settings/rates") { PageFrame { FeeRatesScreen(vm, snap, session, onBack = back) } }
+        composable("settings/school") { PageFrame { SchoolProfileScreen(vm, snap, session, onBack = back) } }
+        composable("settings/users") { PageFrame { UsersScreen(vm, snap, session, onBack = back) } }
+        composable("settings/data") { PageFrame { DataScreen(vm, snap, session, onBack = back) } }
         composable("settings/password") {
-            Column { AppTopBar("Change Password", onBack = back); ChangePasswordForm(vm, forced = false, onDone = back) }
+            PageFrame { Column { AppTopBar("Change Password", onBack = back); ChangePasswordForm(vm, forced = false, onDone = back) } }
         }
-        composable("settings/audit") { AuditLogScreen(vm, onBack = back) }
+        composable("settings/audit") { PageFrame { AuditLogScreen(vm, onBack = back) } }
     }
 }

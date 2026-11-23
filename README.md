@@ -34,6 +34,7 @@ The same app for Windows 10/11 (64-bit), built from the same source code (screen
 * The installer is not code-signed, so Windows SmartScreen may say *"Windows protected your PC"* – click **More info → Run anyway**.
 * **Data:** `%APPDATA%\SchoolFeeManager\school_fees.db` – kept when updating or uninstalling. The database format is identical to the phone's: a backup made on the phone (*Settings → Data → Back up now*) can be restored on the PC and vice versa (a 1.0 phone backup is upgraded automatically).
 * **Printing / PDF:** receipts and reports open in the default browser with its print dialog (choose a printer or *Microsoft Print to PDF*). Report *PDF* export writes a PDF file directly.
+* **Desktop layout:** school-blue sidebar (Dashboard, Students, Payments, Collection, Reports, Settings), File / View / Help menu bar, wide tables with filters, Tab between fields and Enter to log in, keyboard shortcuts (Ctrl+1…6 pages, Ctrl+P collect payment, Ctrl+N register student, Alt+← back).
 * A Java runtime is included (OpenJDK 25 from the `jdk4py` package; licences in `runtime\legal`) – nothing else to install.
 
 Build it (Linux or Windows, needs [NSIS](https://nsis.sourceforge.io) `makensis` on the PATH):
@@ -42,7 +43,7 @@ Build it (Linux or Windows, needs [NSIS](https://nsis.sourceforge.io) `makensis`
 ./gradlew :desktop:run              # run the desktop app on this computer
 ./gradlew :desktop:test             # repository + UI tests on the desktop build
 ```
-Code layout: `desktop/` contains only the Windows-specific parts (`JdbcFeeStore` = SQLite via JDBC instead of Room, file dialogs, printing, PDF, window); everything else is compiled from `app/src/main/java`.
+Code layout: `desktop/` contains only the Windows-specific parts (`JdbcFeeStore` = SQLite via JDBC instead of Room, file dialogs, printing, PDF, window, and the desktop layout in `desktop/ui`: sidebar shell, menu bar, theme and the table-based Dashboard / Students / Payments / Collection / Reports pages); forms, student page, receipts, report view, settings and all logic are compiled from `app/src/main/java`.
 
 ## First login
 `admin` / `admin123` – you are forced to change it immediately.

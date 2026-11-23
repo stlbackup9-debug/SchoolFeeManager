@@ -73,8 +73,12 @@ import java.time.format.DateTimeFormatter
 val DATE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("dd-MMM-yyyy")
 fun LocalDate.fmt(): String = format(DATE_FMT)
 
+/** True in the Windows app: page headers and frames use the desktop style. */
+val LocalDesktop = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @Composable
 fun AppTopBar(title: String, onBack: (() -> Unit)? = null, actions: @Composable () -> Unit = {}) {
+    if (LocalDesktop.current) { DesktopPageHeader(title, onBack, actions); return }
     TopAppBar(
         title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         navigationIcon = {
@@ -88,6 +92,25 @@ fun AppTopBar(title: String, onBack: (() -> Unit)? = null, actions: @Composable 
             actionIconContentColor = Color.White,
         ),
     )
+}
+
+/** Windows page header: white bar, large school-blue title, actions on the right (as in the desktop design). */
+@Composable
+fun DesktopPageHeader(title: String, onBack: (() -> Unit)? = null, actions: @Composable () -> Unit = {}) {
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+        Row(Modifier.fillMaxWidth().height(76.dp).padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (onBack != null) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary) }
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.primary) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { actions() }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
 }
 
 @Composable
