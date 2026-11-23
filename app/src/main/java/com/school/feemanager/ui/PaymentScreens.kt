@@ -78,7 +78,6 @@ import com.school.feemanager.io.HtmlDocs
 import com.school.feemanager.io.ReceiptLine
 import com.school.feemanager.io.ReceiptView
 import com.school.feemanager.ui.theme.Green
-import com.school.feemanager.ui.theme.Navy
 import com.school.feemanager.ui.theme.Red
 import java.time.LocalDate
 import java.time.YearMonth

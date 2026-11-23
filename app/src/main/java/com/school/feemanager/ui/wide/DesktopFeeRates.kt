@@ -1,4 +1,4 @@
-package com.school.feemanager.desktop.ui
+package com.school.feemanager.ui.wide
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -161,7 +161,7 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
                         if (i < rows.lastIndex) HorizontalDivider(color = School.Line)
                     }
                 }
-                if (narrow) androidx.compose.foundation.HorizontalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(hs), Modifier.width(boxW).padding(top = 4.dp))
+                if (narrow) com.school.feemanager.ui.PlatformHorizontalScrollbar(hs, Modifier.width(boxW).padding(top = 4.dp))
                 }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -234,6 +234,7 @@ private fun InputBox(value: String, onChange: (String) -> Unit, enabled: Boolean
     Box(modifier.height(46.dp).background(if (enabled) School.Surface else School.InputDisabled, shape).border(1.dp, border, shape).padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart) {
         BasicTextField(value, onChange, enabled = enabled, singleLine = true, cursorBrush = SolidColor(School.Navy), modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = if (numeric || value.all { it.isDigit() }) androidx.compose.ui.text.input.KeyboardType.Number else androidx.compose.ui.text.input.KeyboardType.Text),
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = if (enabled) School.Text else School.Muted, textAlign = if (numeric) TextAlign.End else TextAlign.Start))
     }
 }

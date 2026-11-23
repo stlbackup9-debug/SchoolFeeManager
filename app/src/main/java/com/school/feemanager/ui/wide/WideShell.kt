@@ -1,4 +1,4 @@
-package com.school.feemanager.desktop.ui
+package com.school.feemanager.ui.wide
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
@@ -53,9 +55,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.FrameWindowScope
-import androidx.compose.ui.input.key.KeyShortcut
-import androidx.compose.ui.window.MenuBar
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.school.feemanager.data.AppSnapshot
@@ -64,9 +63,9 @@ import com.school.feemanager.ui.AppNavHost
 import com.school.feemanager.ui.AppViewModel
 import com.school.feemanager.ui.Session
 
-private data class NavItem(val route: String, val label: String, val icon: ImageVector, val key: Key)
+data class NavItem(val route: String, val label: String, val icon: ImageVector, val key: Key)
 
-private val ITEMS = listOf(
+val NAV_ITEMS = listOf(
     NavItem("dashboard", "Dashboard", Icons.Default.Dashboard, Key.One),
     NavItem("students", "Students", Icons.Default.People, Key.Two),
     NavItem("payments", "Payments", Icons.Default.CalendarMonth, Key.Three),
@@ -84,62 +83,9 @@ class MenuActions {
     var showDisplay by mutableStateOf(false)
 }
 
-/**
- * The window's menu bar. It is created together with the window – a menu bar added later is not laid out
- * by Swing until the window is resized – and its items are enabled once someone is logged in.
- */
+/** Tablet / Windows frame after login: school sidebar on the left, the page on the right. */
 @Composable
-fun FrameWindowScope.AppMenuBar(actions: MenuActions, display: DisplayState, onOpenDataFolder: () -> Unit, onExit: () -> Unit) {
-    val nav = actions.nav
-    val on = nav != null
-    MenuBar {
-        Menu("File", mnemonic = 'F') {
-            Item("Collect payment…", enabled = on, onClick = { nav?.collect() }, shortcut = KeyShortcut(Key.P, ctrl = true))
-            Item("Register student…", enabled = on && actions.isAdmin, onClick = { nav?.newStudent() }, shortcut = KeyShortcut(Key.N, ctrl = true))
-            Separator()
-            Item("Import / export, backup & restore…", enabled = on, onClick = { nav?.top("settings"); nav?.settings("data") })
-            Item("Open data folder", onClick = onOpenDataFolder)
-            Separator()
-            Item("Log out", enabled = on, onClick = { actions.logout() })
-            Item("Exit", onClick = onExit, shortcut = KeyShortcut(Key.F4, alt = true))
-        }
-        Menu("View", mnemonic = 'V') {
-            ITEMS.forEach { i -> Item(i.label, enabled = on, onClick = { nav?.top(i.route) }, shortcut = KeyShortcut(i.key, ctrl = true)) }
-            Separator()
-            Item("Back", enabled = on, onClick = { nav?.back() }, shortcut = KeyShortcut(Key.DirectionLeft, alt = true))
-            Separator()
-            Item("Scale & layout, colour…", onClick = { actions.showDisplay = true }, shortcut = KeyShortcut(Key.Comma, ctrl = true))
-            CheckboxItem("Night mode", checked = display.settings.night, onCheckedChange = { n -> display.update { it.copy(night = n) } }, shortcut = KeyShortcut(Key.D, ctrl = true, shift = true))
-            CheckboxItem("Compact sidebar", checked = display.settings.compactSidebar, onCheckedChange = { c -> display.update { it.copy(compactSidebar = c) } })
-            Item("Make everything bigger", onClick = { display.zoom(+1) }, shortcut = KeyShortcut(Key.Equals, ctrl = true))
-            Item("Make everything smaller", onClick = { display.zoom(-1) }, shortcut = KeyShortcut(Key.Minus, ctrl = true))
-            Item("Normal size (100%)", onClick = { display.update { it.copy(scale = 1f, textSize = 1f) } }, shortcut = KeyShortcut(Key.Zero, ctrl = true))
-        }
-        Menu("Help", mnemonic = 'H') {
-            Item("About School Fee Manager", onClick = { actions.showAbout = true })
-        }
-    }
-}
-
-@Composable
-fun AboutDialog(version: String, dataFolder: String, onOpenDataFolder: () -> Unit, onDismiss: () -> Unit) = AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("School Fee Manager $version") },
-    text = {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Offline school fee management · all amounts in MMK")
-            Text("Data folder: $dataFolder")
-            Text("Backups made here can be restored on the Android app and vice versa (Settings → Data).")
-            Text("Keyboard: Ctrl+1…6 pages, Ctrl+P collect payment, Ctrl+N register student, Alt+← back, Tab next field.")
-        }
-    },
-    confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
-    dismissButton = { TextButton(onClick = { onOpenDataFolder(); onDismiss() }) { Text("Open data folder") } },
-)
-
-/** Windows frame after login: school sidebar on the left, the page on the right. */
-@Composable
-fun DesktopShell(
+fun WideShell(
     actions: MenuActions?,
     vm: AppViewModel, snap: AppSnapshot, session: Session, busy: Boolean, snackbar: SnackbarHostState,
     logo: Painter?, version: String,
@@ -153,8 +99,11 @@ fun DesktopShell(
         onDispose { actions.nav = null; actions.isAdmin = false }
     }
 
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    val mode = LocalDisplay.current?.settings?.sidebar ?: SidebarMode.AUTO
+    val compact = when (mode) { SidebarMode.COMPACT -> true; SidebarMode.FULL -> false; SidebarMode.AUTO -> maxWidth < 1000.dp }
     Row(Modifier.fillMaxSize()) {
-        Sidebar(snap, session, route, logo, version, onSelect = { nav.top(it) }, onLogout = vm::logout, onDisplay = { actions?.showDisplay = true })
+        Sidebar(snap, session, route, logo, version, compact, onSelect = { nav.top(it) }, onLogout = vm::logout, onDisplay = { actions?.showDisplay = true })
         Box(Modifier.weight(1f).fillMaxHeight().background(School.Background)) {
             Column(Modifier.fillMaxSize()) {
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = School.Gold)
@@ -163,12 +112,12 @@ fun DesktopShell(
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp))
         }
     }
+    }
 }
 
 @Composable
-private fun Sidebar(snap: AppSnapshot, session: Session, route: String, logo: Painter?, version: String, onSelect: (String) -> Unit, onLogout: () -> Unit, onDisplay: () -> Unit) {
+private fun Sidebar(snap: AppSnapshot, session: Session, route: String, logo: Painter?, version: String, compact: Boolean, onSelect: (String) -> Unit, onLogout: () -> Unit, onDisplay: () -> Unit) {
     val display = LocalDisplay.current
-    val compact = display?.settings?.compactSidebar == true
     val on = School.OnSidebar
     Column(Modifier.width(if (compact) 84.dp else 240.dp).fillMaxHeight().background(School.Sidebar)) {
         // school name + logo
@@ -183,16 +132,25 @@ private fun Sidebar(snap: AppSnapshot, session: Session, route: String, logo: Pa
             }
         }
         Box(Modifier.fillMaxWidth().height(3.dp).padding(horizontal = if (compact) 14.dp else 22.dp).background(School.Gold.copy(alpha = 0.85f)))
-        Spacer(Modifier.height(18.dp))
-        ITEMS.forEach { item ->
+        Spacer(Modifier.height(if (compact) 10.dp else 18.dp))
+        // the list scrolls when the screen is short (phone in landscape, large scale)
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+        NAV_ITEMS.forEach { item ->
             val selected = route == item.route || route.startsWith(item.route + "/")
             val bg = if (selected) School.SidebarSelected else Color.Transparent
             val fg = if (selected) School.SidebarSelectedText else on
-            Row(
+            if (compact) Column(
+                Modifier.padding(horizontal = 8.dp, vertical = 3.dp).fillMaxWidth().height(60.dp)
+                    .background(bg, RoundedCornerShape(10.dp)).clickable { onSelect(item.route) },
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(item.icon, contentDescription = null, tint = if (selected) School.SidebarSelectedText else School.Gold, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.height(3.dp))
+                Text(item.label, color = fg, fontSize = 11.sp, maxLines = 1, softWrap = false, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+            } else Row(
                 Modifier.padding(horizontal = 12.dp, vertical = 3.dp).fillMaxWidth().height(54.dp)
-                    .background(bg, RoundedCornerShape(10.dp)).clickable { onSelect(item.route) }.padding(horizontal = if (compact) 0.dp else 18.dp),
+                    .background(bg, RoundedCornerShape(10.dp)).clickable { onSelect(item.route) }.padding(horizontal = 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = if (compact) Arrangement.Center else Arrangement.Start,
             ) {
                 Icon(item.icon, contentDescription = item.label, tint = if (selected) School.SidebarSelectedText else School.Gold, modifier = Modifier.size(22.dp))
                 if (!compact) {
@@ -201,12 +159,12 @@ private fun Sidebar(snap: AppSnapshot, session: Session, route: String, logo: Pa
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
+        }
         // Scale & Layout + night mode
-        val night = display?.settings?.night == true
+        val night = School.palette.night
         val nightButton: @Composable () -> Unit = {
             if (display != null) Box(
-                Modifier.size(44.dp).background(on.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).clickable { display.update { it.copy(night = !night) } },
+                Modifier.size(44.dp).background(on.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).clickable { display.update { it.copy(night = !night, followSystem = false) } },
                 contentAlignment = Alignment.Center,
             ) { Icon(if (night) Icons.Default.LightMode else Icons.Default.DarkMode, contentDescription = if (night) "Day mode" else "Night mode", tint = School.Gold, modifier = Modifier.size(20.dp)) }
         }

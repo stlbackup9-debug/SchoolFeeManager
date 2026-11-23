@@ -102,10 +102,10 @@ class DesktopUiTest {
         }
         setContent {
             CompositionLocalProvider(LocalPlatform provides platform, com.school.feemanager.ui.LocalDesktop provides true) {
-                com.school.feemanager.desktop.ui.SchoolDesktopTheme {
+                com.school.feemanager.ui.wide.SchoolTheme {
                     DesktopFrame {
                         AppRoot(vm) { v, snap, session, busy, snackbar ->
-                            com.school.feemanager.desktop.ui.DesktopShell(null, v, snap, session, busy, snackbar, null, "1.1.0")
+                            com.school.feemanager.ui.wide.WideShell(null, v, snap, session, busy, snackbar, null, "1.1.0")
                         }
                     }
                 }

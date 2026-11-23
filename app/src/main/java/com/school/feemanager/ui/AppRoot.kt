@@ -2,12 +2,20 @@
 
 package com.school.feemanager.ui
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -56,6 +64,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -71,7 +80,7 @@ import com.school.feemanager.domain.ReportType
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val TABS = listOf(
-    Tab("dashboard", "Dashboard", Icons.Default.Dashboard),
+    Tab("dashboard", "Home", Icons.Default.Dashboard),
     Tab("students", "Students", Icons.Default.People),
     Tab("payments", "Payables", Icons.Default.CalendarMonth),
     Tab("collection", "Collection", Icons.Default.Payments),
@@ -165,13 +174,15 @@ fun AppRoot(vm: AppViewModel, shell: AppShell? = null) {
     }
 }
 
-/** On Windows the login sits in a card on the school-blue background; on the phone it fills the screen. */
+/** On Windows / tablets the login sits in a card on the school-blue background; on the phone it fills the screen. Scrolls when the screen is short. */
 @Composable
 private fun LoginFrame(modifier: Modifier, content: @Composable () -> Unit) {
-    if (!LocalDesktop.current) { Box(modifier) { content() }; return }
-    Box(modifier.fillMaxSize().background(LocalBrandColor.current ?: MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-        Card(Modifier.widthIn(max = 460.dp).padding(24.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(8.dp)) {
-            Box(Modifier.padding(12.dp)) { content() }
+    val wide = LocalDesktop.current
+    BoxWithConstraints(modifier.fillMaxSize().then(if (wide) Modifier.background(LocalBrandColor.current ?: MaterialTheme.colorScheme.primary) else Modifier)) {
+        Box(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight), contentAlignment = Alignment.Center) {
+            if (wide) Card(Modifier.widthIn(max = 460.dp).padding(24.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(8.dp)) {
+                Box(Modifier.padding(12.dp)) { content() }
+            } else content()
         }
     }
 }
@@ -180,7 +191,7 @@ private fun LoginFrame(modifier: Modifier, content: @Composable () -> Unit) {
 private fun LoginScreen(vm: AppViewModel, snap: AppSnapshot, busy: Boolean, modifier: Modifier) {
     var user by rememberSaveable { mutableStateOf("") }
     var pass by rememberSaveable { mutableStateOf("") }
-    Box(if (LocalDesktop.current) modifier else modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(modifier, contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 420.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(Icons.Default.School, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(56.dp))
             Text(snap.settings.schoolName, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
@@ -217,22 +228,29 @@ private fun MainScaffold(vm: AppViewModel, snap: AppSnapshot, session: Session, 
     val current = entry?.destination?.route
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
+        // each page's top bar handles the status bar; the bottom bar handles the navigation bar
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
                 TABS.forEach { t ->
                     val selected = current == t.route || (current?.startsWith(t.route + "/") == true)
                     NavigationBarItem(
                         selected = selected,
                         onClick = { appNav.top(t.route) },
                         icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+                        label = { Text(t.label, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible) },
                         alwaysShowLabel = true,
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                        ),
                     )
                 }
             }
         },
     ) { pad ->
-        Column(Modifier.padding(pad).fillMaxSize()) {
+        // imePadding: forms scroll above the on-screen keyboard
+        Column(Modifier.padding(pad).consumeWindowInsets(pad).imePadding().fillMaxSize()) {
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             AppNavHost(appNav, vm, snap, session)
         }

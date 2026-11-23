@@ -1,4 +1,4 @@
-package com.school.feemanager.desktop.ui
+package com.school.feemanager.ui.wide
 
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -92,6 +92,8 @@ data class Palette(
         secondary = link, onSecondary = Color.White, secondaryContainer = selectionBar, onSecondaryContainer = accent, tertiary = highlight,
         background = background, onBackground = text, surface = surface, onSurface = text,
         surfaceVariant = Color(0xFFEEF2F7), onSurfaceVariant = muted, outline = Color(0xFFC3CCD6), outlineVariant = line, error = red,
+        surfaceContainer = Color(0xFFF1F4F8), surfaceContainerHigh = Color(0xFFEBEFF4), surfaceContainerHighest = Color(0xFFE4E9EF),
+        surfaceContainerLow = Color(0xFFF7F9FB), surfaceContainerLowest = Color.White,
     ) else darkColorScheme(
         primary = accent, onPrimary = Color(0xFF0E1216), primaryContainer = tableHeader, onPrimaryContainer = text,
         secondary = link, onSecondary = Color(0xFF0E1216), secondaryContainer = selectionBar, onSecondaryContainer = text, tertiary = highlight,
@@ -135,15 +137,24 @@ object School {
     val InputDisabled get() = palette.inputDisabled
 }
 
-/** Scale & layout, colour and night mode – saved per computer. */
+/** Which screen layout to use: chosen from the screen size, or fixed by the user. */
+enum class LayoutMode(val label: String) { AUTO("Automatic"), PHONE("Phone layout"), TABLET("Tablet layout") }
+
+/** Sidebar of the tablet / Windows layout: names and icons, icons only, or chosen from the width. */
+enum class SidebarMode(val label: String) { AUTO("Automatic"), FULL("Full (icons and names)"), COMPACT("Compact (icons)") }
+
+/** Scale & layout, colour and night mode – saved per device. */
 data class DisplaySettings(
     /** size of everything (like Windows "Scale"): 0.8 … 2.0 */
     val scale: Float = 1f,
     /** extra text size on top of the scale: 0.85 … 1.5 */
     val textSize: Float = 1f,
-    val compactSidebar: Boolean = false,
+    val layout: LayoutMode = LayoutMode.AUTO,
+    val sidebar: SidebarMode = SidebarMode.AUTO,
     val accent: Accent = Accent.BLUE,
     val night: Boolean = false,
+    /** follow the phone's / Windows' dark-mode setting instead of [night] */
+    val followSystem: Boolean = false,
 ) {
     companion object {
         val SCALES = listOf(0.8f, 0.9f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f)
@@ -152,8 +163,8 @@ data class DisplaySettings(
     }
 }
 
-/** Holds the display settings, applies the palette and saves to display.properties in the data folder. */
-class DisplayState(private val file: File?) {
+/** Holds the display settings and saves them to display.properties (Windows: data folder; Android: app files). */
+class DisplayState(private val file: File?, private val defaults: DisplaySettings = DisplaySettings()) {
     var settings by mutableStateOf(load())
         private set
 
@@ -164,9 +175,11 @@ class DisplayState(private val file: File?) {
             it.copy(scale = it.scale.coerceIn(0.8f, 2f), textSize = it.textSize.coerceIn(DisplaySettings.MIN_TEXT, DisplaySettings.MAX_TEXT))
         }
         settings = s
-        School.palette = Palette.of(s.accent, s.night)
+        if (!s.followSystem) School.palette = Palette.of(s.accent, s.night)
         save()
     }
+
+    fun reset() = update { defaults }
 
     fun zoom(step: Int) = update { s ->
         val list = DisplaySettings.SCALES
@@ -177,13 +190,17 @@ class DisplayState(private val file: File?) {
     private fun load(): DisplaySettings {
         val p = Properties()
         try { file?.takeIf { it.exists() }?.inputStream()?.use { p.load(it) } } catch (_: Exception) {}
-        val d = DisplaySettings()
+        val d = defaults
         return DisplaySettings(
             scale = p.getProperty("scale")?.toFloatOrNull()?.coerceIn(0.8f, 2f) ?: d.scale,
             textSize = p.getProperty("textSize")?.toFloatOrNull()?.coerceIn(DisplaySettings.MIN_TEXT, DisplaySettings.MAX_TEXT) ?: d.textSize,
-            compactSidebar = p.getProperty("compactSidebar")?.toBoolean() ?: d.compactSidebar,
+            layout = p.getProperty("layout")?.let { v -> LayoutMode.entries.firstOrNull { it.name == v } } ?: d.layout,
+            sidebar = p.getProperty("sidebar")?.let { v -> SidebarMode.entries.firstOrNull { it.name == v } }
+                ?: p.getProperty("compactSidebar")?.toBoolean()?.let { if (it) SidebarMode.COMPACT else SidebarMode.FULL }   // older files
+                ?: d.sidebar,
             accent = p.getProperty("accent")?.let { a -> Accent.entries.firstOrNull { it.name == a } } ?: d.accent,
             night = p.getProperty("night")?.toBoolean() ?: d.night,
+            followSystem = p.getProperty("followSystem")?.toBoolean() ?: d.followSystem,
         )
     }
 
@@ -193,7 +210,8 @@ class DisplayState(private val file: File?) {
             f.absoluteFile.parentFile?.mkdirs()
             val p = Properties()
             p["scale"] = settings.scale.toString(); p["textSize"] = settings.textSize.toString()
-            p["compactSidebar"] = settings.compactSidebar.toString(); p["accent"] = settings.accent.name; p["night"] = settings.night.toString()
+            p["layout"] = settings.layout.name; p["sidebar"] = settings.sidebar.name
+            p["accent"] = settings.accent.name; p["night"] = settings.night.toString(); p["followSystem"] = settings.followSystem.toString()
             f.outputStream().use { p.store(it, "School Fee Manager – display settings (Scale & Layout, colour, night mode)") }
         } catch (e: Exception) {
             System.err.println("Cannot save display settings: ${e.message}")
@@ -216,10 +234,16 @@ private val desktopType = Typography(
     labelSmall = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium),
 )
 
-/** Colours from [School.palette]; size from the Scale & Layout settings (multiplies Windows' own display scaling). */
+/**
+ * The app theme (Android and Windows): colours from the chosen school colour and day / night (or the system's
+ * dark mode), size from the Scale & Layout settings (on top of the device's own display scaling).
+ */
 @Composable
-fun SchoolDesktopTheme(content: @Composable () -> Unit) {
+fun SchoolTheme(content: @Composable () -> Unit) {
     val s = LocalDisplay.current?.settings ?: DisplaySettings()
+    val night = if (s.followSystem) androidx.compose.foundation.isSystemInDarkTheme() else s.night
+    val palette = Palette.of(s.accent, night)
+    if (School.palette != palette) School.palette = palette   // same value every time for these inputs, so this settles at once
     val base = LocalDensity.current
     CompositionLocalProvider(LocalDensity provides Density(base.density * s.scale, base.fontScale * s.textSize)) {
         MaterialTheme(colorScheme = School.palette.colorScheme(), typography = desktopType) {

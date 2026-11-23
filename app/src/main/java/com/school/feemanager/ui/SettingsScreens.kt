@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ManageAccounts
@@ -82,6 +83,11 @@ fun SettingsScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onOpen
             SectionCard("Fees") {
                 MenuRow(Icons.Default.PriceChange, "Fee rates", if (session.isAdmin) "Training, book, hostel, laundry, instrument and entrance fees" else "View current fee rates") { onOpen("rates") }
                 if (session.isAdmin) MenuRow(Icons.Default.Calculate, "Recalculate existing classes", "Re-assess all active class enrollments with the current fee rates") { recalcAll = true }
+            }
+            LocalOpenDisplaySettings.current?.let { open ->
+                SectionCard("Display") {
+                    MenuRow(Icons.Default.DisplaySettings, "Scale & Layout, colour, Night mode", "Text and app size, phone / tablet layout, school colour, Day / Night") { open() }
+                }
             }
             if (session.isAdmin) SectionCard("Administration") {
                 MenuRow(Icons.Default.School, "School profile", "Name, address, receipt prefix, default academic year start") { onOpen("school") }

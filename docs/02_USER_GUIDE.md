@@ -18,7 +18,7 @@
 | Users, school profile, Excel / CSV import, backup & restore, void receipts | ✔ | |
 
 ## Bottom navigation
-**Dashboard** – totals (students, receivable, collected, outstanding, Day/Hostel), today's and this month's collection, receipts issued, students with balances, 6-month chart, class summary, recent transactions. Everything updates as soon as data changes.
+**Home** (Dashboard) – totals (students, receivable, collected, outstanding, Day/Hostel), today's and this month's collection, receipts issued, students with balances, 6-month chart, class summary, recent transactions. Everything updates as soon as data changes.
 
 **Students** – search by name, **Enroll No.** or Student ID; filter by class, Day/Hostel, payment status, inactive. Each row shows the student's classes and the balance over all classes. Tap a student for the profile.
 * **Register** (Admin): **Enroll No.** (typed by you, optional, must be unique), name, remarks, and optionally the first class. The Student ID (STU-0001) is still generated automatically.
@@ -64,5 +64,8 @@ Before anything is saved you see a **preview**: rows with errors, warnings, and 
 ## Upgrading from version 1.0
 Installing 1.1 over 1.0 keeps all data. Every student becomes a student with one class enrollment (using the old academic-year start and 12 months), every receipt keeps its number, date, amount and balances. Enroll numbers are empty – add them on the student's Edit page or with a Students import.
 
+## Phone / tablet layout and display
+The app chooses its layout from the screen: phones get the bottom bar and cards; tablets get the school sidebar with wide tables (compact sidebar in portrait). On a phone open *Settings → Display*, on a tablet tap *Scale & Layout* in the sidebar to change the size of text and items, force the *Phone* or *Tablet* layout, pick one of 7 colours, and choose *Day*, *Night* or *Automatic* (follows the phone's dark theme). The moon/sun button in the sidebar switches night mode quickly.
+
 ## Windows version
-Install with `SchoolFeeManager-1.1.0-Setup.exe` (or use the portable zip). It works exactly like the phone app; the bottom bar, screens and reports are the same. Differences: files are chosen with the normal Windows Open / Save dialogs; *Print* opens the receipt or report in your web browser with its print dialog (pick a printer or *Microsoft Print to PDF*). To move data between phone and PC, make a backup on one and *Restore* it on the other. Data lives in `%APPDATA%\SchoolFeeManager`.
+Install with `SchoolFeeManager-1.2.0-Setup.exe` (or use the portable zip). It works exactly like the phone app; the bottom bar, screens and reports are the same. Differences: files are chosen with the normal Windows Open / Save dialogs; *Print* opens the receipt or report in your web browser with its print dialog (pick a printer or *Microsoft Print to PDF*). To move data between phone and PC, make a backup on one and *Restore* it on the other. Data lives in `%APPDATA%\SchoolFeeManager`.

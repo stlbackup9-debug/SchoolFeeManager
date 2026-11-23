@@ -89,7 +89,7 @@ fun AppTopBar(title: String, onBack: (() -> Unit)? = null, actions: @Composable 
         },
         actions = { actions() },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.primary,
+            containerColor = LocalBrandColor.current ?: MaterialTheme.colorScheme.primary,
             titleContentColor = Color.White,
             navigationIconContentColor = Color.White,
             actionIconContentColor = Color.White,

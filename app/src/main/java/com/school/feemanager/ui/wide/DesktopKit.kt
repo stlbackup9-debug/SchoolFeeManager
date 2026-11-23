@@ -1,8 +1,7 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
-package com.school.feemanager.desktop.ui
+package com.school.feemanager.ui.wide
 
-import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -29,7 +28,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -199,10 +197,10 @@ fun AccentCard(label: String, value: String, accent: Color, modifier: Modifier =
     Row(modifier.height(IntrinsicSize.Min).background(School.Surface, RoundedCornerShape(10.dp)).border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
         Box(Modifier.width(5.dp).fillMaxHeight().background(accent, RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp)))
         Column(Modifier.padding(horizontal = 22.dp, vertical = 18.dp)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = School.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = School.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.Bottom) {
-                Text(value, fontSize = 28.sp, fontWeight = FontWeight.Medium, color = School.Text, maxLines = 1)
+                Text(value, fontSize = 28.sp, fontWeight = FontWeight.Medium, color = School.Text, maxLines = 1, softWrap = false, modifier = Modifier.weight(1f, fill = false))
                 if (extra != null) { Spacer(Modifier.width(8.dp)); Text(extra, style = MaterialTheme.typography.bodyMedium, color = School.Text, modifier = Modifier.padding(bottom = 4.dp)) }
             }
         }
@@ -308,13 +306,13 @@ fun DataGrid(
             Box(Modifier.heightIn(max = bodyMax)) {
                 LazyColumn(state = state, modifier = Modifier.fillMaxWidth().padding(end = 10.dp).onSizeChanged { bodyHeight = with(density) { it.height.toDp() } }) { body() }
                 // sized to the rows (a full-height scrollbar would stretch the table to the bottom of the page)
-                VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.TopEnd).height(bodyHeight))
+                com.school.feemanager.ui.PlatformVerticalScrollbar(state, Modifier.align(Alignment.TopEnd).height(bodyHeight))
             }
             if (empty != null) Text(empty, color = School.Muted, modifier = Modifier.padding(24.dp))
             if (footer != null) Row(Modifier.fillMaxWidth().background(School.Footer, RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)).height(50.dp).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically, content = footer)
         }
-        if (narrow) androidx.compose.foundation.HorizontalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(hScroll), Modifier.width(boxW).padding(top = 4.dp))
+        if (narrow) com.school.feemanager.ui.PlatformHorizontalScrollbar(hScroll, Modifier.width(boxW).padding(top = 4.dp))
         }
     }
 }

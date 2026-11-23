@@ -42,3 +42,10 @@ fun rememberFileSaver(mimeType: String, onResult: (FileRef) -> Unit): (String) -
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(mimeType)) { uri -> if (uri != null) onResult(UriFileRef(context, uri)) }
     return { name -> launcher.launch(name) }
 }
+
+/** Touch screens scroll by swiping – no scrollbar needed. */
+@Composable
+fun PlatformVerticalScrollbar(state: androidx.compose.foundation.lazy.LazyListState, modifier: androidx.compose.ui.Modifier) = Unit
+
+@Composable
+fun PlatformHorizontalScrollbar(state: androidx.compose.foundation.ScrollState, modifier: androidx.compose.ui.Modifier) = Unit

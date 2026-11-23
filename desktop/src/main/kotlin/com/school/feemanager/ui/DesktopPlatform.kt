@@ -23,6 +23,8 @@ class LocalFileRef(val file: File) : FileRef {
 }
 
 object DesktopPlatform : PlatformBridge {
+    override val isDesktop: Boolean get() = true
+
     private val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows", true)
 
     /**
@@ -118,3 +120,11 @@ fun rememberFileSaver(mimeType: String, onResult: (FileRef) -> Unit): (String) -
         { suggested -> showDialog(owner, "Save as", save = true, suggested = suggested, extensions = emptyList())?.let { callback(LocalFileRef(it)) } }
     }
 }
+
+@Composable
+fun PlatformVerticalScrollbar(state: androidx.compose.foundation.lazy.LazyListState, modifier: androidx.compose.ui.Modifier) =
+    androidx.compose.foundation.VerticalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(state), modifier)
+
+@Composable
+fun PlatformHorizontalScrollbar(state: androidx.compose.foundation.ScrollState, modifier: androidx.compose.ui.Modifier) =
+    androidx.compose.foundation.HorizontalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(state), modifier)

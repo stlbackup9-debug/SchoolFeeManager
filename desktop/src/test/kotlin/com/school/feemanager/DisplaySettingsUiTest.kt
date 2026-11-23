@@ -21,14 +21,14 @@ import com.school.feemanager.data.PayItem
 import com.school.feemanager.data.PaymentRequest
 import com.school.feemanager.data.StudentForm
 import com.school.feemanager.desktop.DesktopFrame
-import com.school.feemanager.desktop.ui.Accent
-import com.school.feemanager.desktop.ui.DesktopShell
-import com.school.feemanager.desktop.ui.DisplaySettingsDialog
-import com.school.feemanager.desktop.ui.DisplayState
-import com.school.feemanager.desktop.ui.LocalDisplay
-import com.school.feemanager.desktop.ui.MenuActions
-import com.school.feemanager.desktop.ui.School
-import com.school.feemanager.desktop.ui.SchoolDesktopTheme
+import com.school.feemanager.ui.wide.Accent
+import com.school.feemanager.ui.wide.WideShell
+import com.school.feemanager.ui.wide.DisplaySettingsDialog
+import com.school.feemanager.ui.wide.DisplayState
+import com.school.feemanager.ui.wide.LocalDisplay
+import com.school.feemanager.ui.wide.MenuActions
+import com.school.feemanager.ui.wide.School
+import com.school.feemanager.ui.wide.SchoolTheme
 import com.school.feemanager.domain.BookType
 import com.school.feemanager.domain.PaymentTerm
 import com.school.feemanager.domain.StudentStatus
@@ -66,7 +66,7 @@ class DisplaySettingsUiTest {
     @Before fun main() = Dispatchers.setMain(UnconfinedTestDispatcher())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    @After fun reset() { Dispatchers.resetMain(); School.palette = com.school.feemanager.desktop.ui.Palette.of(Accent.BLUE, false) }
+    @After fun reset() { Dispatchers.resetMain(); School.palette = com.school.feemanager.ui.wide.Palette.of(Accent.BLUE, false) }
 
     private fun ComposeUiTest.shot(name: String) {
         waitForIdle()
@@ -97,9 +97,9 @@ class DisplaySettingsUiTest {
         val platform = object : PlatformBridge { override fun printHtml(html: String, jobName: String, isReport: Boolean) {}; override fun restartApp() {} }
         setContent {
             CompositionLocalProvider(LocalPlatform provides platform, LocalDesktop provides true, LocalDisplay provides display) {
-                SchoolDesktopTheme {
+                SchoolTheme {
                     DesktopFrame {
-                        AppRoot(vm) { v, snap, session, busy, snackbar -> DesktopShell(actions, v, snap, session, busy, snackbar, null, "1.1.0") }
+                        AppRoot(vm) { v, snap, session, busy, snackbar -> WideShell(actions, v, snap, session, busy, snackbar, null, "1.1.0") }
                         if (actions.showDisplay) DisplaySettingsDialog(display) { actions.showDisplay = false }
                     }
                 }
@@ -130,7 +130,7 @@ class DisplaySettingsUiTest {
         shot("22-students-night")
 
         // compact sidebar + day mode via the sidebar moon/sun button, back to 100 %
-        display.update { it.copy(compactSidebar = true, scale = 1f) }
+        display.update { it.copy(sidebar = com.school.feemanager.ui.wide.SidebarMode.COMPACT, scale = 1f) }
         onAllNodesWithContentDescription("Day mode")[0].performClick()
         waitForIdle()
         assertTrue(!display.settings.night)

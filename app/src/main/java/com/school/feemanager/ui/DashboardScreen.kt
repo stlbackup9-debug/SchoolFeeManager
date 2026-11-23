@@ -45,10 +45,7 @@ import com.school.feemanager.data.AppSnapshot
 import com.school.feemanager.domain.Money
 import com.school.feemanager.domain.MonthTotal
 import com.school.feemanager.ui.theme.Amber
-import com.school.feemanager.ui.theme.Blue
 import com.school.feemanager.ui.theme.Green
-import com.school.feemanager.ui.theme.LightBlue
-import com.school.feemanager.ui.theme.Navy
 import com.school.feemanager.ui.theme.Red
 import java.time.format.DateTimeFormatter
 
@@ -62,15 +59,15 @@ fun DashboardScreen(snap: AppSnapshot, onStudent: (Long) -> Unit, onReceipt: (Lo
 
             StatRow(
                 { StatCard("Total Students Enrolled", d.totalStudents.toString(), Icons.Default.Groups, it) },
-                { StatCard("Total Fee Receivable", Money.mmk(d.totalReceivable), Icons.Default.RequestQuote, it, Navy) },
+                { StatCard("Total Fee Receivable", Money.mmk(d.totalReceivable), Icons.Default.RequestQuote, it, MaterialTheme.colorScheme.primary) },
             )
             StatRow(
                 { StatCard("Total Cash Collected", Money.mmk(d.totalCollected), Icons.Default.Savings, it, Green) },
                 { StatCard("Total Outstanding", Money.mmk(d.totalOutstanding), Icons.Default.AccountBalanceWallet, it, Red) },
             )
             StatRow(
-                { StatCard("Day (enrollments)", d.dayStudents.toString(), Icons.Default.WbSunny, it, Blue) },
-                { StatCard("Hostel (enrollments)", d.hostelStudents.toString(), Icons.Default.Bed, it, Blue) },
+                { StatCard("Day (enrollments)", d.dayStudents.toString(), Icons.Default.WbSunny, it, MaterialTheme.colorScheme.secondary) },
+                { StatCard("Hostel (enrollments)", d.hostelStudents.toString(), Icons.Default.Bed, it, MaterialTheme.colorScheme.secondary) },
             )
             StatRow(
                 { StatCard("Collected Today", Money.mmk(d.collectedToday), Icons.Default.Today, it, Green) },
@@ -84,7 +81,7 @@ fun DashboardScreen(snap: AppSnapshot, onStudent: (Long) -> Unit, onReceipt: (Lo
             SectionCard("Collection performance") {
                 Text("${d.collectionRatePct}% of total receivable collected", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(progress = { (d.collectionRatePct / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(8.dp), color = Green, trackColor = LightBlue)
+                LinearProgressIndicator(progress = { (d.collectionRatePct / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(8.dp), color = Green, trackColor = MaterialTheme.colorScheme.primaryContainer)
                 Spacer(Modifier.height(14.dp))
                 Text("Cash collected – last 6 months (MMK)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(6.dp))
@@ -140,6 +137,8 @@ private val MONTH: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM")
 @Composable
 private fun MonthBars(months: List<MonthTotal>) {
     val max = (months.maxOfOrNull { it.amount } ?: 0L).coerceAtLeast(1L)
+    val Blue = MaterialTheme.colorScheme.secondary
+    val LightBlue = MaterialTheme.colorScheme.primaryContainer
     Canvas(Modifier.fillMaxWidth().height(120.dp)) {
         val n = months.size.coerceAtLeast(1)
         val slot = size.width / n

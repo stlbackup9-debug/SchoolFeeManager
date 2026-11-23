@@ -18,7 +18,13 @@ interface PlatformBridge {
 
     /** Restarts the app, e.g. after a backup was restored. */
     fun restartApp()
+
+    /** True on Windows / PC (keyboard shortcuts, menu bar). */
+    val isDesktop: Boolean get() = false
 }
+
+/** Opens the Scale & Layout dialog (set by the host app; null = not available). */
+val LocalOpenDisplaySettings = androidx.compose.runtime.staticCompositionLocalOf<(() -> Unit)?> { null }
 
 val LocalPlatform = staticCompositionLocalOf<PlatformBridge> { error("PlatformBridge not provided") }
 
@@ -26,4 +32,6 @@ val LocalPlatform = staticCompositionLocalOf<PlatformBridge> { error("PlatformBr
  * Each platform also provides (same signatures, in AndroidPlatform.kt / DesktopPlatform.kt):
  *   @Composable fun rememberFileOpener(onResult: (FileRef) -> Unit): (mimeTypes: Array<String>) -> Unit
  *   @Composable fun rememberFileSaver(mimeType: String, onResult: (FileRef) -> Unit): (suggestedName: String) -> Unit
+ *   @Composable fun PlatformVerticalScrollbar(state: LazyListState, modifier: Modifier)     (Windows: scrollbar, touch: nothing)
+ *   @Composable fun PlatformHorizontalScrollbar(state: ScrollState, modifier: Modifier)
  */

@@ -34,27 +34,24 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import com.school.feemanager.data.FeeRepository
 import com.school.feemanager.data.JdbcFeeStore
-import com.school.feemanager.ui.AppRoot
 import com.school.feemanager.ui.AppViewModel
 import com.school.feemanager.ui.DesktopPlatform
 import com.school.feemanager.ui.LocalAwtFrame
 import com.school.feemanager.ui.LocalPlatform
 import com.school.feemanager.desktop.ui.AboutDialog
+import com.school.feemanager.ui.wide.DisplayState
+import com.school.feemanager.ui.wide.LocalDisplay
+import com.school.feemanager.ui.wide.MenuActions
+import com.school.feemanager.ui.wide.SchoolApp
+import com.school.feemanager.ui.wide.SchoolTheme
 import com.school.feemanager.desktop.ui.AppMenuBar
-import com.school.feemanager.desktop.ui.DesktopShell
-import com.school.feemanager.desktop.ui.DisplaySettingsDialog
-import com.school.feemanager.desktop.ui.DisplayState
-import com.school.feemanager.desktop.ui.LocalDisplay
-import com.school.feemanager.desktop.ui.MenuActions
-import com.school.feemanager.desktop.ui.SchoolDesktopTheme
-import com.school.feemanager.ui.LocalDesktop
 import java.io.File
 import javax.imageio.ImageIO
 import javax.swing.JOptionPane
 import kotlin.system.exitProcess
 
 const val APP_NAME = "School Fee Manager"
-const val APP_VERSION = "1.1.0"
+const val APP_VERSION = "1.2.0"
 
 /** Where the database lives: %APPDATA%\SchoolFeeManager on Windows, ~/.schoolfeemanager elsewhere. Not inside the program folder, so updates and uninstalling keep the data. */
 fun dataDir(): File {
@@ -86,14 +83,12 @@ fun main() {
         ) {
             window.minimumSize = java.awt.Dimension(1100, 680)
             AppMenuBar(actions, display, onOpenDataFolder = openData, onExit = ::exitApplication)
-            CompositionLocalProvider(LocalPlatform provides DesktopPlatform, LocalAwtFrame provides window, LocalDesktop provides true, LocalDisplay provides display) {
-                SchoolDesktopTheme {
+            CompositionLocalProvider(LocalPlatform provides DesktopPlatform, LocalAwtFrame provides window, LocalDisplay provides display) {
+                SchoolTheme {
                     DesktopFrame {
-                        AppRoot(vm) { v, snap, session, busy, snackbar ->
-                            DesktopShell(actions, v, snap, session, busy, snackbar, icon, APP_VERSION)
-                        }
+                        // same app as on Android tablets; the window always uses the wide (sidebar + tables) layout
+                        SchoolApp(vm, display, actions, icon, APP_VERSION, alwaysWide = true)
                         if (actions.showAbout) AboutDialog(APP_VERSION, dataDir().absolutePath, openData) { actions.showAbout = false }
-                        if (actions.showDisplay) DisplaySettingsDialog(display) { actions.showDisplay = false }
                     }
                 }
             }

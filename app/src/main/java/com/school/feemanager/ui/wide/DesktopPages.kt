@@ -1,4 +1,4 @@
-package com.school.feemanager.desktop.ui
+package com.school.feemanager.ui.wide
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -6,6 +6,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -86,25 +89,33 @@ object DesktopScreens : TopScreens {
             DesktopPageHeader("Dashboard") {
                 Text("${d.activeEnrollments} active class enrollments · Today ${snap.today.fmt()}", style = MaterialTheme.typography.bodyLarge, color = School.Muted)
             }
-            Column(Modifier.fillMaxSize().background(School.Background).verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    AccentCard("Total Students Enrolled", d.totalStudents.toString(), School.Navy, Modifier.weight(1f))
-                    AccentCard("Total Fee Receivable (MMK)", Money.format(d.totalReceivable), School.Navy, Modifier.weight(1f))
-                    AccentCard("Total Cash Collected (MMK)", Money.format(d.totalCollected), School.Green, Modifier.weight(1f))
+            // narrow screens (tablet in portrait, large scale): tiles in 2 or 3 columns, panels stacked
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+            val narrow = maxWidth < 900.dp
+            val veryNarrow = maxWidth < 620.dp
+            val gap = if (narrow) 14.dp else 20.dp
+            Column(Modifier.fillMaxSize().background(School.Background).verticalScroll(rememberScrollState()).padding(if (narrow) 16.dp else 28.dp), verticalArrangement = Arrangement.spacedBy(gap)) {
+                val tiles: List<@Composable (Modifier) -> Unit> = listOf(
+                    { m -> AccentCard("Total Students Enrolled", d.totalStudents.toString(), School.Navy, m) },
+                    { m -> AccentCard("Total Fee Receivable (MMK)", Money.format(d.totalReceivable), School.Navy, m) },
+                    { m -> AccentCard("Total Cash Collected (MMK)", Money.format(d.totalCollected), School.Green, m) },
+                    { m -> AccentCard("Total Outstanding Balance (MMK)", Money.format(d.totalOutstanding), School.Red, m) },
+                    { m -> AccentCard("Day Students", d.dayStudents.toString(), School.Blue, m) },
+                    { m -> AccentCard("Hostel Students", d.hostelStudents.toString(), School.Blue, m) },
+                    { m -> AccentCard("Collected Today", Money.format(d.collectedToday), School.Green, m) },
+                    { m -> AccentCard("Collected This Month", Money.format(d.collectedThisMonth), School.Green, m) },
+                    { m -> AccentCard("Receipts Issued", d.receiptsIssued.toString(), School.Navy, m) },
+                    { m -> AccentCard("Students With Balance", d.studentsWithBalance.toString(), School.Amber, m, extra = "(${d.overdueStudents} overdue)") },
+                )
+                val rowsOfTiles = if (veryNarrow) tiles.chunked(2) else if (narrow) tiles.chunked(3) else listOf(tiles.subList(0, 3), tiles.subList(3, 6), tiles.subList(6, 10))
+                rowsOfTiles.forEach { r ->
+                    Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        r.forEach { t -> t(Modifier.weight(1f).fillMaxHeight()) }
+                        // keep the last, shorter row the same tile width
+                        repeat((rowsOfTiles.first().size - r.size).coerceAtLeast(0)) { Spacer(Modifier.weight(1f)) }
+                    }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    AccentCard("Total Outstanding Balance (MMK)", Money.format(d.totalOutstanding), School.Red, Modifier.weight(1f))
-                    AccentCard("Day Students", d.dayStudents.toString(), School.Blue, Modifier.weight(1f))
-                    AccentCard("Hostel Students", d.hostelStudents.toString(), School.Blue, Modifier.weight(1f))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    AccentCard("Collected Today", Money.format(d.collectedToday), School.Green, Modifier.weight(1f))
-                    AccentCard("Collected This Month", Money.format(d.collectedThisMonth), School.Green, Modifier.weight(1f))
-                    AccentCard("Receipts Issued", d.receiptsIssued.toString(), School.Navy, Modifier.weight(1f))
-                    AccentCard("Students With Balance", d.studentsWithBalance.toString(), School.Amber, Modifier.weight(1f), extra = "(${d.overdueStudents} overdue)")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Panel("Collection performance", Modifier.weight(0.85f)) {
+                val perf: @Composable (Modifier) -> Unit = { pm -> Panel("Collection performance", pm) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("${d.collectionRatePct}%", style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.width(10.dp))
@@ -116,8 +127,8 @@ object DesktopScreens : TopScreens {
                         Text("Cash collected – last 6 months (MMK)", style = MaterialTheme.typography.bodyLarge, color = School.Muted)
                         Spacer(Modifier.height(10.dp))
                         MonthChart(d.lastSixMonths.map { it.month to it.amount })
-                    }
-                    Panel("Recent cash collection", Modifier.weight(1.15f)) {
+                    } }
+                val recentPanel: @Composable (Modifier) -> Unit = { pm -> Panel("Recent cash collection", pm) {
                         val cols = listOf(Col("Date", 0f, width = 124.dp), Col("Receipt", 0f, width = 160.dp), Col("Student", 1f), Col("Class", 0f, width = 78.dp), Col("Amount", 0f, true, width = 105.dp))
                         val recent = snap.payments.filter { !it.voided }.sortedWith(compareByDescending<com.school.feemanager.domain.PaymentRecord> { it.date }.thenByDescending { it.id }).take(8)
                         DataGrid(cols, Modifier.fillMaxWidth().heightIn(max = 520.dp), empty = if (recent.isEmpty()) "No payments recorded yet" else null) {
@@ -130,8 +141,9 @@ object DesktopScreens : TopScreens {
                                 }
                             }
                         }
-                    }
-                }
+                    } }
+                if (narrow) { perf(Modifier.fillMaxWidth()); recentPanel(Modifier.fillMaxWidth()) }
+                else Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) { perf(Modifier.weight(0.85f)); recentPanel(Modifier.weight(1.15f)) }
                 val rows = d.classSummaries.filter { it.totalStudents > 0 || it.totalReceivable > 0 }
                 if (rows.isNotEmpty()) Panel("Fee collection summary by class") {
                     val cols = listOf(Col("Class", 1f), Col("Day", 0.7f, true), Col("Hostel", 0.7f, true), Col("Total", 0.7f, true), Col("Receivable", 1.3f, true), Col("Collected", 1.3f, true), Col("Balance", 1.3f, true))
@@ -150,6 +162,7 @@ object DesktopScreens : TopScreens {
                         }
                     }
                 }
+            }
             }
         }
     }

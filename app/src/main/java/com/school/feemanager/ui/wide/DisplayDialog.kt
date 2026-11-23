@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalLayoutApi::class)
 
-package com.school.feemanager.desktop.ui
+package com.school.feemanager.ui.wide
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,10 +24,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.TabletAndroid
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.ViewSidebar
+import androidx.compose.material.icons.automirrored.filled.ViewSidebar
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -52,18 +56,19 @@ private fun pct(f: Float) = "${(f * 100).roundToInt()}%"
 @Composable
 fun DisplaySettingsDialog(display: DisplayState, onClose: () -> Unit) {
     val s = display.settings
+    val pc = com.school.feemanager.ui.LocalPlatform.current.isDesktop
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text("Scale & Layout") },
         text = {
-            Column(Modifier.widthIn(min = 560.dp, max = 640.dp).heightIn(max = 620.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.widthIn(max = 640.dp).then(if (pc) Modifier.widthIn(min = 560.dp) else Modifier).heightIn(max = 620.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Section("Scale – change the size of text, apps and other items") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         DisplaySettings.SCALES.forEach { v ->
                             Choice(pct(v) + if (v == 1f) " (recommended)" else "", selected = kotlin.math.abs(s.scale - v) < 0.001f) { display.update { it.copy(scale = v) } }
                         }
                     }
-                    Hint("Also: Ctrl + =  bigger,  Ctrl + –  smaller,  Ctrl + 0  normal size.")
+                    if (pc) Hint("Also: Ctrl + =  bigger,  Ctrl + –  smaller,  Ctrl + 0  normal size.")
                 }
                 Section("Text size – ${pct(s.textSize)}") {
                     Slider(
@@ -74,9 +79,19 @@ fun DisplaySettingsDialog(display: DisplayState, onClose: () -> Unit) {
                     Text("Sample: Aung Aung · G-3 · 1,146,000 MMK", style = MaterialTheme.typography.bodyLarge)
                 }
                 Section("Layout") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconChoice("Full sidebar (icons and names)", Icons.Default.ViewSidebar, !s.compactSidebar) { display.update { it.copy(compactSidebar = false) } }
-                        IconChoice("Compact sidebar (icons only)", Icons.Default.Menu, s.compactSidebar) { display.update { it.copy(compactSidebar = true) } }
+                    if (!pc) {
+                        Hint("Screen layout – Automatic uses the phone layout on phones and the sidebar + tables layout on tablets. Tablet on a phone works when the phone is turned sideways.")
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            IconChoice("Automatic", Icons.Default.Devices, s.layout == LayoutMode.AUTO) { display.update { it.copy(layout = LayoutMode.AUTO) } }
+                            IconChoice("Phone", Icons.Default.PhoneAndroid, s.layout == LayoutMode.PHONE) { display.update { it.copy(layout = LayoutMode.PHONE) } }
+                            IconChoice("Tablet", Icons.Default.TabletAndroid, s.layout == LayoutMode.TABLET) { display.update { it.copy(layout = LayoutMode.TABLET) } }
+                        }
+                    }
+                    Hint(if (pc) "Sidebar" else "Sidebar (tablet layout)")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconChoice("Automatic", Icons.Default.Devices, s.sidebar == SidebarMode.AUTO) { display.update { it.copy(sidebar = SidebarMode.AUTO) } }
+                        IconChoice("Full (icons and names)", Icons.AutoMirrored.Filled.ViewSidebar, s.sidebar == SidebarMode.FULL) { display.update { it.copy(sidebar = SidebarMode.FULL) } }
+                        IconChoice("Compact (icons)", Icons.Default.Menu, s.sidebar == SidebarMode.COMPACT) { display.update { it.copy(sidebar = SidebarMode.COMPACT) } }
                     }
                 }
                 Section("Colour") {
@@ -85,16 +100,17 @@ fun DisplaySettingsDialog(display: DisplayState, onClose: () -> Unit) {
                     }
                 }
                 Section("Mode") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconChoice("Day", Icons.Default.LightMode, !s.night) { display.update { it.copy(night = false) } }
-                        IconChoice("Night", Icons.Default.DarkMode, s.night) { display.update { it.copy(night = true) } }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconChoice("Day", Icons.Default.LightMode, !s.followSystem && !s.night) { display.update { it.copy(night = false, followSystem = false) } }
+                        IconChoice("Night", Icons.Default.DarkMode, !s.followSystem && s.night) { display.update { it.copy(night = true, followSystem = false) } }
+                        IconChoice(if (pc) "Automatic (as Windows)" else "Automatic (as phone)", Icons.Default.BrightnessAuto, s.followSystem) { display.update { it.copy(followSystem = true) } }
                     }
                     Hint("Night mode uses dark backgrounds – easier on the eyes in the evening. Printed receipts and reports stay white.")
                 }
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
-        dismissButton = { TextButton(onClick = { display.update { DisplaySettings() } }) { Text("Reset to default") } },
+        dismissButton = { TextButton(onClick = { display.reset() }) { Text("Reset to default") } },
     )
 }
 
