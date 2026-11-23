@@ -174,7 +174,12 @@ class MultiClassTest {
         val r = ModuleImporter.read(ImportModule.FEE_RATES, rates, card)
         assertEquals(listOf("PIANO-1", "G-3"), r.classRates.map { it.className })
         assertEquals(9, r.classRates[0].startMonth); assertEquals(10, r.classRates[0].periodMonths)
-        assertEquals(6, r.classRates[1].startMonth); assertEquals(12, r.classRates[1].periodMonths)
+        // blank cells keep the current values of an existing class
+        assertEquals(null, r.classRates[1].startMonth); assertEquals(null, r.classRates[1].hostelFee)
+        val g3 = r.classRates[1].applyTo(card.rateFor("G-3"), 0, 12)
+        assertEquals(230000L, g3.trainingFee); assertEquals(card.rateFor("G-3")!!.bookDayIntl, g3.bookDayIntl); assertEquals(950000L, g3.hostelFee)
+        val piano = r.classRates[0].applyTo(null, 13, 12)
+        assertEquals(0L, piano.bookDayMyanmar); assertEquals(1, piano.startDay)
     }
 
     @Test fun xlsxTemplatesRoundTripThroughTheImporter() {

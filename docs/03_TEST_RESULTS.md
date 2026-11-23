@@ -10,7 +10,10 @@
 | Multiple classes per student, per-class start date / period, payables, combined receipts, Enroll No. search, Excel/CSV module import (all 4 modules, templates, CSV quoting, aliases), student matching | 6 JUnit tests (`MultiClassTest`) | **6 / 6 pass** |
 | Database migration v1 → v2 | `MigrationTest`: builds a v1 database from Room's exported schema with students, fees, schedules, receipts (incl. voided and a receipt-less transaction), runs the migration SQL on real SQLite, compares every table/column/key/index with a fresh v2 database and checks every migrated value | **1 / 1 pass** |
 | Build | `./gradlew test lintDebug assembleDebug assembleRelease` with Android SDK 35, AGP 8.7.3, Kotlin 2.0.21 | **Success** – no compiler warnings, 0 lint errors |
-| Android UI, Room repository on a device, printing, backup/restore | **Not run** – no Android emulator/device is available in the build environment (no hardware virtualisation). The repository code (payments, imports) compiles and was reviewed but is not covered by an automated test here. | Pending – try on a phone |
+| Repository on a real SQLite database (Windows build, same code as Android): multi-class enrollments, combined receipt for two students, void, deactivated class, re-assessment, every report → PDF, module imports with dry-run preview, re-import without duplicates, fee-rate import keeping blank columns, workbook export → import into a new database with identical balances and receipts, original-layout workbook imported twice, backup/restore, restoring a version-1.0 phone backup | 5 JUnit tests (`desktop/…/RepositoryTest`) | **5 / 5 pass** |
+| Windows screens | `DesktopUiTest` drives the real UI headless: login → dashboard → students → student page → Payables multi-select → Collect → confirm → combined receipt → print → collection → report → Data; screenshots saved | **1 / 1 pass** |
+| Windows package | `packageWindows` builds the NSIS installer, launcher and portable zip; the packaged jars were started with `main()` on JDK 21 (virtual display): database created, login screen shown | Built; **not run on Windows** |
+| Android UI on a device, printing | **Not run** – no Android emulator/device is available in the build environment (no hardware virtualisation). The repository code (payments, imports) compiles and was reviewed but is not covered by an automated test here. | Pending – try on a phone |
 
 ## Specification test scenarios
 
@@ -52,5 +55,7 @@ BusinessRulesTest  15 tests  0 failures
 MigrationTest       1 test   0 failures
 MultiClassTest      6 tests  0 failures
 WorkbookTest        3 tests  0 failures
-RESULT: 25 passed, 0 failed
+RepositoryTest      5 tests  0 failures   (desktop)
+DesktopUiTest       1 test   0 failures   (desktop)
+RESULT: 31 passed, 0 failed
 ```

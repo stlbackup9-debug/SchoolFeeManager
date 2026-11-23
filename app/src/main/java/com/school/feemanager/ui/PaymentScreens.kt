@@ -2,7 +2,6 @@
 
 package com.school.feemanager.ui
 
-import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -62,7 +61,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -82,7 +80,6 @@ import com.school.feemanager.io.ReceiptView
 import com.school.feemanager.ui.theme.Green
 import com.school.feemanager.ui.theme.Navy
 import com.school.feemanager.ui.theme.Red
-import com.school.feemanager.util.Printer
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -194,7 +191,7 @@ fun CollectionScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onNe
     var tab by rememberSaveable { mutableStateOf(0) }
     var selectMode by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf(setOf<Long>()) }
-    val context = LocalContext.current
+    val context = LocalPlatform.current
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             if (selectMode) AppTopBar("${selected.size} receipt(s) selected", onBack = { selectMode = false; selected = emptySet() }) {
@@ -515,7 +512,7 @@ private fun CollectForm(vm: AppViewModel, snap: AppSnapshot, ledgers: List<Stude
 @Composable
 fun ReceiptScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, receiptId: Long, onBack: () -> Unit) {
     val r = snap.receiptById[receiptId]
-    val context = LocalContext.current
+    val context = LocalPlatform.current
     Column(Modifier.fillMaxSize()) {
         AppTopBar("Receipt", onBack) {
             if (r != null) IconButton(onClick = { printReceipt(context, receiptView(snap, r)); vm.markPrinted(listOf(r.id)) }) { Icon(Icons.Default.Print, contentDescription = "Print") }
@@ -579,10 +576,10 @@ fun receiptView(snap: AppSnapshot, r: ReceiptRecord) = ReceiptView(
     reprint = r.printCount > 0, voided = r.voided,
 )
 
-private fun printReceipt(context: Context, v: ReceiptView) = Printer.printHtml(context, HtmlDocs.receipt(v), "Receipt ${v.receiptNo}", isReport = false)
+private fun printReceipt(platform: PlatformBridge, v: ReceiptView) = platform.printHtml(HtmlDocs.receipt(v), "Receipt ${v.receiptNo}", isReport = false)
 
-private fun printCombined(context: Context, snap: AppSnapshot, list: List<ReceiptRecord>) {
+private fun printCombined(platform: PlatformBridge, snap: AppSnapshot, list: List<ReceiptRecord>) {
     if (list.isEmpty()) return
     val html = HtmlDocs.combinedReceipts(list.map { receiptView(snap, it) }, snap.settings.schoolName, snap.settings.address, snap.settings.phone)
-    Printer.printHtml(context, html, "Combined receipt ${list.first().receiptNo}${if (list.size > 1) " +${list.size - 1}" else ""}", isReport = false)
+    platform.printHtml(html, "Combined receipt ${list.first().receiptNo}${if (list.size > 1) " +${list.size - 1}" else ""}", isReport = false)
 }

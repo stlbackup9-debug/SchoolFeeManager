@@ -2,9 +2,6 @@
 
 package com.school.feemanager.ui
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,7 +29,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.school.feemanager.data.AppSnapshot
 import com.school.feemanager.data.ImportSummary
@@ -41,19 +37,18 @@ import com.school.feemanager.io.ImportModule
 import com.school.feemanager.ui.theme.Amber
 import com.school.feemanager.ui.theme.Green
 import com.school.feemanager.ui.theme.Red
-import com.school.feemanager.util.AppRestarter
 
 private const val XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 private val IMPORT_TYPES = arrayOf(XLSX, "text/csv", "text/comma-separated-values", "text/plain", "application/csv", "application/vnd.ms-excel", "application/octet-stream")
 
 @Composable
 fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: () -> Unit) {
-    val context = LocalContext.current
+    val platform = LocalPlatform.current
     var preview by remember { mutableStateOf<ImportBundle?>(null) }
     var dryRun by remember { mutableStateOf<ImportSummary?>(null) }
     var updateRates by remember { mutableStateOf(true) }
     var summary by remember { mutableStateOf<ImportSummary?>(null) }
-    var restoreUri by remember { mutableStateOf<Uri?>(null) }
+    var restoreUri by remember { mutableStateOf<FileRef?>(null) }
     var module by remember { mutableStateOf<ImportModule?>(null) }
     var templateFor by remember { mutableStateOf<Pair<ImportModule, Boolean>?>(null) }
     val stamp = snap.today.toString()
@@ -63,20 +58,12 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
         if (!imp.isEmpty) vm.previewImport(imp, rates) { dryRun = it }
     }
 
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.parseImport(uri) { showPreview(it, it.rates != null && it.rates != snap.card) }
-    }
-    val moduleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val m = module
-        if (uri != null && m != null) vm.parseModuleImport(m, uri) { showPreview(it, false) }
-    }
-    val templateLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        val t = templateFor
-        if (uri != null && t != null) vm.writeTemplate(uri, t.first, t.second)
-    }
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(XLSX)) { uri -> if (uri != null) vm.exportWorkbook(uri) }
-    val backupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> if (uri != null) vm.backup(uri) }
-    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) restoreUri = uri }
+    val importLauncher = rememberFileOpener { f -> vm.parseImport(f) { showPreview(it, it.rates != null && it.rates != snap.card) } }
+    val moduleLauncher = rememberFileOpener { f -> module?.let { m -> vm.parseModuleImport(m, f) { showPreview(it, false) } } }
+    val templateLauncher = rememberFileSaver("application/octet-stream") { f -> templateFor?.let { t -> vm.writeTemplate(f, t.first, t.second) } }
+    val exportLauncher = rememberFileSaver(XLSX) { f -> vm.exportWorkbook(f) }
+    val backupLauncher = rememberFileSaver("application/octet-stream") { f -> vm.backup(f) }
+    val restoreLauncher = rememberFileOpener { f -> restoreUri = f }
 
     Column(Modifier.fillMaxSize()) {
         AppTopBar("Data", onBack)
@@ -92,9 +79,9 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Button(onClick = { module = m; moduleLauncher.launch(IMPORT_TYPES) }, modifier = Modifier.weight(1.2f)) { Text("Import…") }
-                            OutlinedButton(onClick = { templateFor = m to false; templateLauncher.launch("${m.sheetName}_template.xlsx") }, modifier = Modifier.weight(1f)) { Text(".xlsx") }
-                            OutlinedButton(onClick = { templateFor = m to true; templateLauncher.launch("${m.sheetName}_template.csv") }, modifier = Modifier.weight(1f)) { Text(".csv") }
+                            Button(onClick = { module = m; moduleLauncher(IMPORT_TYPES) }, modifier = Modifier.weight(1.2f)) { Text("Import…") }
+                            OutlinedButton(onClick = { templateFor = m to false; templateLauncher("${m.sheetName}_template.xlsx") }, modifier = Modifier.weight(1f)) { Text(".xlsx") }
+                            OutlinedButton(onClick = { templateFor = m to true; templateLauncher("${m.sheetName}_template.csv") }, modifier = Modifier.weight(1f)) { Text(".csv") }
                         }
                     }
                 }
@@ -102,20 +89,20 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
                     Text("School_Fee_Management.xlsx (or a workbook exported by this app): Student_Register, Cash_Collection and Fee_Rates. Formulas are not imported – fees, balances, schedules and the dashboard are recalculated by the app. Receipt numbers and dates are preserved; duplicates are skipped.",
                         style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = { importLauncher.launch(arrayOf(XLSX, "application/octet-stream", "application/vnd.ms-excel")) }, modifier = Modifier.fillMaxWidth()) { Text("Choose .xlsx workbook…") }
+                    Button(onClick = { importLauncher(arrayOf(XLSX, "application/octet-stream", "application/vnd.ms-excel")) }, modifier = Modifier.fillMaxWidth()) { Text("Choose .xlsx workbook…") }
                 }
             }
             SectionCard("Export to Excel") {
                 Text("Writes Dashboard, Student_Register (one row per class enrollment), Payment_Schedule, Cash_Collection and Fee_Rates. The file can be imported again.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
-                Button(onClick = { exportLauncher.launch("School_Fee_Management_$stamp.xlsx") }, modifier = Modifier.fillMaxWidth()) { Text("Export workbook") }
+                Button(onClick = { exportLauncher("School_Fee_Management_$stamp.xlsx") }, modifier = Modifier.fillMaxWidth()) { Text("Export workbook") }
             }
             if (session.isAdmin) SectionCard("Backup & restore") {
-                Text("A backup is a complete copy of the database (students, classes, payments, receipts, users, rates). Save it to Google Drive, a USB drive or another phone regularly.", style = MaterialTheme.typography.bodySmall)
+                Text("A backup is a complete copy of the database (students, classes, payments, receipts, users, rates). Save it to Google Drive, a USB drive or another device regularly. A backup from the phone app can be restored on the Windows app and vice versa.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { backupLauncher.launch("school_fees_backup_$stamp.db") }, modifier = Modifier.weight(1f)) { Text("Back up now") }
-                    OutlinedButton(onClick = { restoreLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.weight(1f)) { Text("Restore…") }
+                    Button(onClick = { backupLauncher("school_fees_backup_$stamp.db") }, modifier = Modifier.weight(1f)) { Text("Back up now") }
+                    OutlinedButton(onClick = { restoreLauncher(arrayOf("*/*")) }, modifier = Modifier.weight(1f)) { Text("Restore…") }
                 }
             }
         }
@@ -177,9 +164,9 @@ fun DataScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack: ()
     restoreUri?.let { uri ->
         ConfirmDialog(
             title = "Restore backup?",
-            text = "ALL current data on this phone will be replaced by the backup. A safety copy of the current database is kept inside the app. The app will restart.",
+            text = "ALL current data on this device will be replaced by the backup. A safety copy of the current database is kept inside the app. The app will restart.",
             confirmLabel = "Restore", destructive = true,
-            onConfirm = { vm.restore(uri) { AppRestarter.restart(context) } },
+            onConfirm = { vm.restore(uri) { platform.restartApp() } },
             onDismiss = { restoreUri = null },
         )
     }

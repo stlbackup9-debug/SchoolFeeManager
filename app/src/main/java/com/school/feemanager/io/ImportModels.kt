@@ -2,6 +2,7 @@ package com.school.feemanager.io
 
 import com.school.feemanager.domain.BookType
 import com.school.feemanager.domain.ClassRate
+import com.school.feemanager.domain.FeeAssessment
 import com.school.feemanager.domain.FeeRateCard
 import com.school.feemanager.domain.PaymentTerm
 import com.school.feemanager.domain.StudentStatus
@@ -29,7 +30,37 @@ data class ImportedEnrollment(
     val discountBp: Int,
     val term: PaymentTerm,
     val remarks: String,
+    /** The approved fee amounts, when the file was exported by this app (kept instead of recalculating). */
+    val approvedFee: FeeAssessment? = null,
 )
+
+/** One class row of a Fee rates import. Null = the cell was blank: keep the current value (0 / default for a new class). */
+data class ClassRateUpdate(
+    val className: String,
+    val trainingFee: Long?,
+    val bookDayMyanmar: Long?,
+    val bookDayIntl: Long?,
+    val bookHostelMyanmar: Long?,
+    val bookHostelIntl: Long?,
+    val hostelFee: Long?,
+    val startMonth: Int?,
+    val startDay: Int?,
+    val periodMonths: Int?,
+) {
+    fun applyTo(old: ClassRate?, sortOrder: Int, defaultPeriod: Int): ClassRate = ClassRate(
+        className = old?.className ?: className,
+        sortOrder = old?.sortOrder ?: sortOrder,
+        trainingFee = trainingFee ?: old?.trainingFee ?: 0,
+        bookDayMyanmar = bookDayMyanmar ?: old?.bookDayMyanmar ?: 0,
+        bookDayIntl = bookDayIntl ?: old?.bookDayIntl ?: 0,
+        bookHostelMyanmar = bookHostelMyanmar ?: old?.bookHostelMyanmar ?: 0,
+        bookHostelIntl = bookHostelIntl ?: old?.bookHostelIntl ?: 0,
+        hostelFee = hostelFee ?: old?.hostelFee ?: 0,
+        startMonth = startMonth ?: old?.startMonth ?: 6,
+        startDay = startDay ?: old?.startDay ?: 1,
+        periodMonths = periodMonths ?: old?.periodMonths ?: defaultPeriod,
+    )
+}
 
 /** A student row (from Student_Register or a Students import). [enrollment] is optional for module imports. */
 data class ImportedStudent(
@@ -78,7 +109,7 @@ data class ImportBundle(
     /** full rate card from a workbook (replaces the current one when the user agrees) */
     val rates: FeeRateCard?,
     /** class rows to add or update (module import) */
-    val classRates: List<ClassRate>,
+    val classRates: List<ClassRateUpdate>,
     val students: List<ImportedStudent>,
     val enrollments: List<ImportedEnrollmentRow>,
     val payments: List<ImportedPayment>,

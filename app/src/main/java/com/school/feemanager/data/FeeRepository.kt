@@ -1,8 +1,5 @@
 package com.school.feemanager.data
 
-import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import androidx.room.withTransaction
 import com.school.feemanager.domain.BookType
 import com.school.feemanager.domain.ClassRate
 import com.school.feemanager.domain.DashboardSummary
@@ -35,7 +32,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.LocalDate
@@ -120,7 +116,8 @@ class FeeException(message: String) : Exception(message)
 
 private class DryRunRollback(val summary: ImportSummary) : Exception()
 
-class FeeRepository(private val context: Context, private val db: AppDatabase) {
+/** All business operations. Platform-neutral: the database comes in through [FeeStore]. */
+class FeeRepository(private val db: FeeStore) {
     private val settingsDao = db.settingsDao()
     private val rateDao = db.feeRateDao()
     private val studentDao = db.studentDao()
@@ -131,8 +128,10 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
     private val userDao = db.userDao()
     private val auditDao = db.auditDao()
 
+    fun auditLog(limit: Int): Flow<List<AuditLogEntity>> = auditDao.observeRecent(limit)
+
     // ------------------------------------------------------------------ setup
-    suspend fun ensureSeeded() = db.withTransaction {
+    suspend fun ensureSeeded() = db.transaction {
         if (settingsDao.get() == null) {
             val today = LocalDate.now()
             // Myanmar academic year starts in June.
@@ -222,14 +221,14 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         audit(by, "PASSWORD", "Password changed for ${u.username}")
     }
 
-    suspend fun setUserActive(userId: Long, active: Boolean, by: String) = db.withTransaction {
+    suspend fun setUserActive(userId: Long, active: Boolean, by: String) = db.transaction {
         val u = userDao.get(userId) ?: throw FeeException("User not found")
         if (!active && u.role == Role.ADMIN.name && userDao.activeAdminCount() <= 1) throw FeeException("At least one active Admin is required")
         userDao.update(u.copy(active = active))
         audit(by, if (active) "USER_ENABLE" else "USER_DISABLE", u.username)
     }
 
-    suspend fun setUserRole(userId: Long, role: Role, by: String) = db.withTransaction {
+    suspend fun setUserRole(userId: Long, role: Role, by: String) = db.transaction {
         val u = userDao.get(userId) ?: throw FeeException("User not found")
         if (u.role == Role.ADMIN.name && role != Role.ADMIN && userDao.activeAdminCount() <= 1) throw FeeException("At least one active Admin is required")
         userDao.update(u.copy(role = role.name))
@@ -281,7 +280,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
     }
 
     /** Creates or updates a student; a new student can get a first class enrollment at once. Returns the student id. */
-    suspend fun saveStudent(id: Long?, form: StudentForm, firstEnrollment: EnrollmentForm?, by: String): Long = db.withTransaction {
+    suspend fun saveStudent(id: Long?, form: StudentForm, firstEnrollment: EnrollmentForm?, by: String): Long = db.transaction {
         validateStudent(id, form)
         val name = cleanName(form.name)
         val key = name.lowercase(Locale.ROOT)
@@ -308,7 +307,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         }
     }
 
-    suspend fun setStudentActive(id: Long, active: Boolean, by: String) = db.withTransaction {
+    suspend fun setStudentActive(id: Long, active: Boolean, by: String) = db.transaction {
         val s = studentDao.get(id) ?: throw FeeException("Student not found")
         studentDao.update(s.copy(active = active, updatedAt = System.currentTimeMillis()))
         audit(by, if (active) "STUDENT_REACTIVATE" else "STUDENT_DEACTIVATE", s.code)
@@ -322,13 +321,13 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         )
     }
 
-    private suspend fun insertEnrollment(studentId: Long, form: EnrollmentForm, card: FeeRateCard, by: String): Long {
+    private suspend fun insertEnrollment(studentId: Long, form: EnrollmentForm, card: FeeRateCard, by: String, approvedFee: FeeAssessment? = null): Long {
         val year = form.academicYear.trim()
         enrollmentDao.findDuplicate(studentId, form.className, year, -1)?.let {
             throw FeeException("This student is already enrolled in ${it.className} for $year")
         }
         val now = System.currentTimeMillis()
-        val fee = preview(card, form)
+        val fee = approvedFee ?: preview(card, form)
         val base = EnrollmentEntity(
             studentId = studentId, className = form.className, academicYear = year, startDate = form.startDate.toEpochDay(), periodMonths = form.periodMonths,
             studentType = form.type.name, studentStatus = form.status.name, bookType = form.bookType.name, paymentTerm = form.term.name,
@@ -342,12 +341,12 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
     }
 
     /** Adds (id == null) or edits a class enrollment. Fee-relevant changes re-assess with the CURRENT rates. */
-    suspend fun saveEnrollment(id: Long?, studentId: Long, form: EnrollmentForm, by: String): Long = db.withTransaction {
+    suspend fun saveEnrollment(id: Long?, studentId: Long, form: EnrollmentForm, by: String): Long = db.transaction {
         val (_, card) = currentCard()
         validateEnrollment(form, card)
         val st = studentDao.get(studentId) ?: throw FeeException("Student not found")
         nameClash(studentId, st.nameKey, form)?.let { throw FeeException(it) }
-        if (id == null) return@withTransaction insertEnrollment(studentId, form, card, by)
+        if (id == null) return@transaction insertEnrollment(studentId, form, card, by)
         val old = enrollmentDao.get(id) ?: throw FeeException("Enrollment not found")
         val year = form.academicYear.trim()
         enrollmentDao.findDuplicate(studentId, form.className, year, id)?.let { throw FeeException("This student is already enrolled in ${it.className} for $year") }
@@ -370,14 +369,14 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         id
     }
 
-    suspend fun setEnrollmentActive(id: Long, active: Boolean, by: String) = db.withTransaction {
+    suspend fun setEnrollmentActive(id: Long, active: Boolean, by: String) = db.transaction {
         val e = enrollmentDao.get(id) ?: throw FeeException("Enrollment not found")
         enrollmentDao.update(e.copy(active = active, updatedAt = System.currentTimeMillis()))
         audit(by, if (active) "ENROLL_REACTIVATE" else "ENROLL_DEACTIVATE", "enrollment $id ${e.className} ${e.academicYear}")
     }
 
     /** Explicit re-assessment of enrollments with the CURRENT fee rates (null = every active enrollment). */
-    suspend fun recalculate(enrollmentIds: List<Long>?, by: String): Int = db.withTransaction {
+    suspend fun recalculate(enrollmentIds: List<Long>?, by: String): Int = db.transaction {
         val (_, card) = currentCard()
         val activeStudents = studentDao.getAll().filter { it.active }.map { it.id }.toSet()
         val targets = if (enrollmentIds == null) enrollmentDao.getAll().filter { it.active && it.studentId in activeStudents } else enrollmentIds.mapNotNull { enrollmentDao.get(it) }
@@ -397,7 +396,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         enrollmentDao.forStudent(studentId).sumOf { it.netTotal } - txDao.validForStudent(studentId).sumOf { it.amount }
 
     /** Records a payment of one or more lines as ONE receipt, atomically. Returns the receipt id. */
-    suspend fun recordPayment(req: PaymentRequest, by: String): Long = db.withTransaction {
+    suspend fun recordPayment(req: PaymentRequest, by: String): Long = db.transaction {
         if (req.items.isEmpty()) throw FeeException("Select at least one item to pay")
         if (req.items.any { it.amount <= 0 }) throw FeeException("Every amount must be greater than zero")
         if (req.date.isAfter(LocalDate.now())) throw FeeException("Collection date cannot be in the future")
@@ -442,7 +441,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
     }
 
     /** Voids a whole receipt (all its lines). */
-    suspend fun voidReceipt(receiptId: Long, reason: String, by: String) = db.withTransaction {
+    suspend fun voidReceipt(receiptId: Long, reason: String, by: String) = db.transaction {
         if (reason.isBlank()) throw FeeException("A reason is required to void a receipt")
         val r = receiptDao.get(receiptId) ?: throw FeeException("Receipt not found")
         if (r.voided) throw FeeException("Already voided")
@@ -476,13 +475,13 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
         rateDao.insertAll(card.classes.mapIndexed { i, c -> c.copy(sortOrder = i).toEntity() })
     }
 
-    suspend fun saveRates(card: FeeRateCard, by: String) = db.withTransaction {
+    suspend fun saveRates(card: FeeRateCard, by: String) = db.transaction {
         validateCard(card)
         writeCard(card)
         audit(by, "RATES_UPDATE", "Fee rates changed (${card.classes.size} classes). Existing assessments unchanged.")
     }
 
-    suspend fun saveSchoolProfile(name: String, address: String, phone: String, receiptPrefix: String, yearStart: LocalDate, by: String) = db.withTransaction {
+    suspend fun saveSchoolProfile(name: String, address: String, phone: String, receiptPrefix: String, yearStart: LocalDate, by: String) = db.transaction {
         if (name.isBlank()) throw FeeException("School name is required")
         if (!Regex("^[A-Za-z0-9]{1,8}$").matches(receiptPrefix.trim())) throw FeeException("Receipt prefix: 1–8 letters or digits")
         val s = settingsDao.get()!!
@@ -510,7 +509,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
      * checked and counted exactly as a real import, then rolled back – used for the preview.
      */
     suspend fun applyImport(imp: ImportBundle, updateRates: Boolean, dryRun: Boolean, by: String): ImportSummary = try {
-        db.withTransaction {
+        db.transaction {
             val s = runImport(imp, updateRates, dryRun, by)
             if (dryRun) throw DryRunRollback(s)
             s
@@ -531,12 +530,18 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
             ratesUpdated = true
         }
         if (imp.classRates.isNotEmpty()) {
-            val (_, card) = currentCard()
+            val (settings, card) = currentCard()
             val merged = card.classes.toMutableList()
-            imp.classRates.forEach { c ->
-                val i = merged.indexOfFirst { it.className.equals(c.className, true) }
-                if (i >= 0) { if (merged[i].copy(sortOrder = 0) != c.copy(sortOrder = 0)) classesUpdated++; merged[i] = c.copy(className = merged[i].className, sortOrder = merged[i].sortOrder) }
-                else { merged += c.copy(sortOrder = merged.size); classesAdded++ }
+            imp.classRates.forEach { u ->
+                val i = merged.indexOfFirst { it.className.equals(u.className, true) }
+                if (i >= 0) {
+                    val updated = u.applyTo(merged[i], merged[i].sortOrder, settings.monthsPerYear)
+                    if (updated != merged[i]) classesUpdated++
+                    merged[i] = updated
+                } else {
+                    merged += u.applyTo(null, merged.size, settings.monthsPerYear)
+                    classesAdded++
+                }
             }
             val newCard = card.copy(classes = merged)
             validateCard(newCard)
@@ -563,7 +568,7 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
             val form = formOf(card, e, today)
             val list = enrollmentsByStudent.getOrPut(studentId) { ArrayList() }
             if (list.any { it.className.equals(form.className, true) && it.academicYear.equals(form.academicYear, true) }) { enrollDup++; return }
-            val id = insertEnrollment(studentId, form, card, by)
+            val id = insertEnrollment(studentId, form, card, by, e.approvedFee)
             list += enrollmentDao.get(id)!!
             refresh(studentId)
             enrollAdded++
@@ -682,36 +687,8 @@ class FeeRepository(private val context: Context, private val db: AppDatabase) {
     }
 
     // ------------------------------------------------------- backup/restore
-    fun backupTo(out: OutputStream) {
-        val file = context.getDatabasePath(AppDatabase.NAME)
-        // An exclusive transaction blocks writers while the single database file is copied.
-        db.runInTransaction(Runnable { file.inputStream().use { it.copyTo(out) } })
-        out.flush()
-    }
+    fun backupTo(out: OutputStream) = db.backupTo(out)
 
     /** Validates a backup file and replaces the database. The caller must restart the app afterwards. */
-    fun restoreFrom(input: InputStream) {
-        val tmp = File(context.cacheDir, "restore_candidate.db")
-        input.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
-        val header = tmp.inputStream().use { s -> ByteArray(16).also { s.read(it) } }
-        if (String(header, Charsets.US_ASCII) != "SQLite format 3\u0000") { tmp.delete(); throw FeeException("This file is not a School Fee Manager backup") }
-        try {
-            SQLiteDatabase.openDatabase(tmp.path, null, SQLiteDatabase.OPEN_READONLY).use { check ->
-                check.rawQuery("SELECT COUNT(*) FROM students", null).use { it.moveToFirst() }
-                check.rawQuery("SELECT COUNT(*) FROM payment_transactions", null).use { it.moveToFirst() }
-                check.rawQuery("SELECT COUNT(*) FROM users WHERE role = 'ADMIN'", null).use { c -> c.moveToFirst(); if (c.getInt(0) == 0) throw FeeException("Backup has no Admin user") }
-            }
-        } catch (e: FeeException) {
-            tmp.delete(); throw e
-        } catch (e: Exception) {
-            tmp.delete(); throw FeeException("Backup file is damaged or from another app: ${e.message}")
-        }
-        val dbFile = context.getDatabasePath(AppDatabase.NAME)
-        // Safety copy of the current data before overwriting.
-        File(context.filesDir, "before_restore_${System.currentTimeMillis()}.db").let { safety -> dbFile.copyTo(safety, overwrite = true) }
-        db.close()
-        listOf("-journal", "-wal", "-shm").forEach { File(dbFile.path + it).delete() }
-        tmp.copyTo(dbFile, overwrite = true)
-        tmp.delete()
-    }
+    fun restoreFrom(input: InputStream) = db.restoreFrom(input)
 }

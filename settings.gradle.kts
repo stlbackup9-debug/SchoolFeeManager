@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "SchoolFeeManager"
 include(":app")
+include(":desktop")

@@ -1,4 +1,4 @@
-# School Fee Manager (Android)
+# School Fee Manager (Android + Windows)
 
 Offline school fee management app converted from `School_Fee_Management.xlsx`.
 Kotlin · Jetpack Compose (Material 3) · MVVM · Room (SQLite) · min Android 8.0 (API 26) · target API 35 · currency MMK.
@@ -27,6 +27,22 @@ Command line alternative (Android SDK installed, `ANDROID_HOME` set):
 The release build is signed with the debug key so it installs directly. Before publishing on Google Play, create your own signing key (*Build → Generate Signed App Bundle / APK*).
 
 If the build reports an error, copy the first error message and send it back – it can be fixed quickly.
+
+## Windows version
+The same app for Windows 10/11 (64-bit), built from the same source code (screens, rules, import/export, database logic).
+* **Install:** run `SchoolFeeManager-1.1.0-Setup.exe` (no admin rights needed; installs to `%LOCALAPPDATA%\Programs\School Fee Manager`, with Start-menu and desktop shortcuts). Or unzip `SchoolFeeManager-1.1.0-Windows-portable.zip` anywhere and run `SchoolFeeManager.exe`.
+* The installer is not code-signed, so Windows SmartScreen may say *"Windows protected your PC"* – click **More info → Run anyway**.
+* **Data:** `%APPDATA%\SchoolFeeManager\school_fees.db` – kept when updating or uninstalling. The database format is identical to the phone's: a backup made on the phone (*Settings → Data → Back up now*) can be restored on the PC and vice versa (a 1.0 phone backup is upgraded automatically).
+* **Printing / PDF:** receipts and reports open in the default browser with its print dialog (choose a printer or *Microsoft Print to PDF*). Report *PDF* export writes a PDF file directly.
+* A Java runtime is included (OpenJDK 25 from the `jdk4py` package; licences in `runtime\legal`) – nothing else to install.
+
+Build it (Linux or Windows, needs [NSIS](https://nsis.sourceforge.io) `makensis` on the PATH):
+```
+./gradlew :desktop:packageWindows   # desktop/build/windows/*.exe and *.zip
+./gradlew :desktop:run              # run the desktop app on this computer
+./gradlew :desktop:test             # repository + UI tests on the desktop build
+```
+Code layout: `desktop/` contains only the Windows-specific parts (`JdbcFeeStore` = SQLite via JDBC instead of Room, file dialogs, printing, PDF, window); everything else is compiled from `app/src/main/java`.
 
 ## First login
 `admin` / `admin123` – you are forced to change it immediately.

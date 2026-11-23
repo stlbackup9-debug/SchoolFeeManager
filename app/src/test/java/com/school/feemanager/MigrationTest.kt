@@ -1,6 +1,6 @@
 package com.school.feemanager
 
-import com.school.feemanager.data.Migrations
+import com.school.feemanager.data.MigrationSql
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -84,7 +84,7 @@ class MigrationTest {
         v1.exec("INSERT INTO receipts VALUES (12, 'OLD-77', 3, 23, 550000, 480000, 'Imported', 0)")
 
         v1.autoCommit = false
-        Migrations.statements(start, 12).forEach { s -> v1.exec(s.sql, *s.args) }
+        MigrationSql.statements(start, 12).forEach { s -> v1.exec(s.sql, *s.args) }
         v1.commit()
         v1.autoCommit = true
 

@@ -63,3 +63,6 @@ Before anything is saved you see a **preview**: rows with errors, warnings, and 
 
 ## Upgrading from version 1.0
 Installing 1.1 over 1.0 keeps all data. Every student becomes a student with one class enrollment (using the old academic-year start and 12 months), every receipt keeps its number, date, amount and balances. Enroll numbers are empty – add them on the student's Edit page or with a Students import.
+
+## Windows version
+Install with `SchoolFeeManager-1.1.0-Setup.exe` (or use the portable zip). It works exactly like the phone app; the bottom bar, screens and reports are the same. Differences: files are chosen with the normal Windows Open / Save dialogs; *Print* opens the receipt or report in your web browser with its print dialog (pick a printer or *Microsoft Print to PDF*). To move data between phone and PC, make a backup on one and *Restore* it on the other. Data lives in `%APPDATA%\SchoolFeeManager`.

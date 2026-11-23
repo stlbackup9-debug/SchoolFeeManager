@@ -1,17 +1,12 @@
 package com.school.feemanager.ui
 
-import android.net.Uri
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
-import com.school.feemanager.FeeApp
 import com.school.feemanager.data.AppSnapshot
 import com.school.feemanager.data.AuditLogEntity
 import com.school.feemanager.data.EnrollmentForm
 import com.school.feemanager.data.FeeException
+import com.school.feemanager.data.FeeRepository
 import com.school.feemanager.data.ImportSummary
 import com.school.feemanager.data.PaymentRequest
 import com.school.feemanager.data.StudentForm
@@ -45,11 +40,10 @@ data class Session(val userId: Long, val username: String, val fullName: String,
  * repository on every database change) and call the action methods below. Errors are reported
  * through [message] and shown as a snackbar.
  */
-class AppViewModel(private val app: FeeApp) : ViewModel() {
-    private val repo = app.repository
+class AppViewModel(private val repo: FeeRepository) : ViewModel() {
 
     val snapshot: StateFlow<AppSnapshot?> = repo.snapshot().stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    val auditLog: StateFlow<List<AuditLogEntity>> = app.database.auditDao().observeRecent(300).stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val auditLog: StateFlow<List<AuditLogEntity>> = repo.auditLog(300).stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val _session = MutableStateFlow<Session?>(null)
     val session: StateFlow<Session?> = _session.asStateFlow()
@@ -170,24 +164,24 @@ class AppViewModel(private val app: FeeApp) : ViewModel() {
     }
 
     // ------------------------------------------------------ import/export
-    private suspend fun readBytes(uri: Uri): ByteArray = withContext(Dispatchers.IO) {
-        app.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw FeeException("Cannot open the selected file")
-    }
+    private suspend fun readBytes(file: FileRef): ByteArray = withContext(Dispatchers.IO) { file.openInput().use { it.readBytes() } }
 
-    fun parseImport(uri: Uri, onParsed: (ImportBundle) -> Unit) = action {
+    private suspend fun write(file: FileRef, block: (java.io.OutputStream) -> Unit) = withContext(Dispatchers.IO) { file.openOutput().use(block) }
+
+    fun parseImport(file: FileRef, onParsed: (ImportBundle) -> Unit) = action {
         admin()
         val card = snapshot.value?.card ?: FeeRateCard.workbookDefaults()
-        val bytes = readBytes(uri)
+        val bytes = readBytes(file)
         val imp = withContext(Dispatchers.Default) {
             try { WorkbookImporter.read(bytes.inputStream(), card) } catch (e: Exception) { throw FeeException("Not a valid .xlsx workbook: ${e.message}") }
         }
         onParsed(imp)
     }
 
-    fun parseModuleImport(module: ImportModule, uri: Uri, onParsed: (ImportBundle) -> Unit) = action {
+    fun parseModuleImport(module: ImportModule, file: FileRef, onParsed: (ImportBundle) -> Unit) = action {
         admin()
         val card = snapshot.value?.card ?: FeeRateCard.workbookDefaults()
-        val bytes = readBytes(uri)
+        val bytes = readBytes(file)
         val imp = withContext(Dispatchers.Default) {
             try { ModuleImporter.read(module, bytes, card) } catch (e: IllegalArgumentException) { throw FeeException(e.message ?: "File not understood") }
             catch (e: Exception) { throw FeeException("Cannot read the file (use .xlsx or .csv): ${e.message}") }
@@ -205,49 +199,30 @@ class AppViewModel(private val app: FeeApp) : ViewModel() {
         onDone(r)
     }
 
-    fun writeTemplate(uri: Uri, module: ImportModule, csv: Boolean) = action("Template saved") {
-        withContext(Dispatchers.IO) {
-            val bytes = if (csv) ModuleImporter.templateCsv(module) else ModuleImporter.templateXlsx(module)
-            app.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: throw FeeException("Cannot write the file")
-        }
+    fun writeTemplate(file: FileRef, module: ImportModule, csv: Boolean) = action("Template saved") {
+        val bytes = if (csv) ModuleImporter.templateCsv(module) else ModuleImporter.templateXlsx(module)
+        write(file) { it.write(bytes) }
     }
 
-    fun exportWorkbook(uri: Uri) = action("Workbook exported") {
+    fun exportWorkbook(file: FileRef) = action("Workbook exported") {
         val s = snapshot.value ?: throw FeeException("Data is still loading")
-        withContext(Dispatchers.IO) {
-            val bytes = WorkbookExporter.export(s.settings.schoolName, s.ledgers, s.payments, s.card, s.dashboard)
-            app.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: throw FeeException("Cannot write the file")
-        }
+        val bytes = withContext(Dispatchers.Default) { WorkbookExporter.export(s.settings.schoolName, s.ledgers, s.payments, s.card, s.dashboard) }
+        write(file) { it.write(bytes) }
     }
 
-    fun exportReport(uri: Uri, table: ReportTable, asPdf: Boolean) = action(if (asPdf) "PDF saved" else "Excel file saved") {
+    fun exportReport(file: FileRef, table: ReportTable, asPdf: Boolean) = action(if (asPdf) "PDF saved" else "Excel file saved") {
         val school = snapshot.value?.settings?.schoolName ?: ""
-        withContext(Dispatchers.IO) {
-            app.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                if (asPdf) PdfExporter.writeReport(table, school, out) else out.write(WorkbookExporter.exportReport(table, school))
-            } ?: throw FeeException("Cannot write the file")
-        }
+        write(file) { out -> if (asPdf) PdfExporter.writeReport(table, school, out) else out.write(WorkbookExporter.exportReport(table, school)) }
     }
 
-    fun backup(uri: Uri) = action("Backup saved") {
+    fun backup(file: FileRef) = action("Backup saved") {
         admin()
-        withContext(Dispatchers.IO) {
-            app.contentResolver.openOutputStream(uri, "wt")?.use { repo.backupTo(it) } ?: throw FeeException("Cannot write the backup file")
-        }
+        write(file) { repo.backupTo(it) }
     }
 
-    fun restore(uri: Uri, onRestored: () -> Unit) = action {
+    fun restore(file: FileRef, onRestored: () -> Unit) = action {
         admin()
-        withContext(Dispatchers.IO) {
-            val input = app.contentResolver.openInputStream(uri) ?: throw FeeException("Cannot open the backup file")
-            repo.restoreFrom(input)
-        }
+        withContext(Dispatchers.IO) { repo.restoreFrom(file.openInput()) }
         onRestored()
-    }
-
-    companion object {
-        val Factory: ViewModelProvider.Factory = viewModelFactory {
-            initializer { AppViewModel(this[APPLICATION_KEY] as FeeApp) }
-        }
     }
 }

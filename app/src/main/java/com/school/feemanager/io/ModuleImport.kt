@@ -209,19 +209,19 @@ enum class ImportModule(val label: String, val description: String, val sheetNam
     ),
     FEE_RATES(
         "Fee rates (classes)",
-        "One row per class. Existing classes are updated, new classes are added. Existing students keep their approved fees.",
+        "One row per class. Existing classes are updated (blank cells keep the current value), new classes are added. Existing students keep their approved fees.",
         "Fee_Rates",
         listOf(
             ImportColumn("Class", true, "Class name", "G-3"),
-            ImportColumn("Training Fee", true, "MMK per period", "220000", listOf("Training")),
-            ImportColumn("Book Day-Myanmar", false, "MMK", "30000", listOf("Day-Myanmar", "Book Day MM")),
-            ImportColumn("Book Day-Intl", false, "MMK", "36000", listOf("Day-International", "Book Day International")),
-            ImportColumn("Book Hostel-Myanmar", false, "MMK", "33000", listOf("Hostel-Myanmar", "Book Hostel MM")),
-            ImportColumn("Book Hostel-Intl", false, "MMK", "40000", listOf("Hostel-International", "Book Hostel International")),
-            ImportColumn("Hostel Fee", false, "MMK (hostel students)", "950000", listOf("Hostel")),
-            ImportColumn("Start Month", false, "1–12 (blank = 6, June)", "6"),
-            ImportColumn("Start Day", false, "1–31 (blank = 1)", "1"),
-            ImportColumn("Period (Months)", false, "1–24 (blank = 12)", "12", listOf("Period", "Months")),
+            ImportColumn("Training Fee", false, "MMK per period (blank = keep current, 0 for a new class)", "220000", listOf("Training")),
+            ImportColumn("Book Day-Myanmar", false, "MMK (blank = keep current)", "30000", listOf("Day-Myanmar", "Book Day MM")),
+            ImportColumn("Book Day-Intl", false, "MMK (blank = keep current)", "36000", listOf("Day-International", "Book Day International")),
+            ImportColumn("Book Hostel-Myanmar", false, "MMK (blank = keep current)", "33000", listOf("Hostel-Myanmar", "Book Hostel MM")),
+            ImportColumn("Book Hostel-Intl", false, "MMK (blank = keep current)", "40000", listOf("Hostel-International", "Book Hostel International")),
+            ImportColumn("Hostel Fee", false, "MMK, hostel students (blank = keep current)", "950000", listOf("Hostel")),
+            ImportColumn("Start Month", false, "1–12 (blank = keep current; June for a new class)", "6"),
+            ImportColumn("Start Day", false, "1–31 (blank = keep current; 1 for a new class)", "1"),
+            ImportColumn("Period (Months)", false, "1–24 (blank = keep current; default months for a new class)", "12", listOf("Period", "Months")),
         ),
     );
 
@@ -342,30 +342,30 @@ object ModuleImporter {
         )
     }
 
-    private fun rate(r: RawRow, sheet: String, issues: MutableList<ImportIssue>): ClassRate? {
+    private fun rate(r: RawRow, sheet: String, issues: MutableList<ImportIssue>): ClassRateUpdate? {
         val cls = r.text(k("Class")).uppercase(Locale.US)
         if (cls.isEmpty()) return null
         if (cls.length > 10) { issues += ImportIssue(sheet, r.line, "Class name '$cls' is longer than 10 characters – row skipped", true); return null }
-        fun money(h: String, required: Boolean): Long? {
+        var bad = false
+        // blank = keep the current amount (0 for a new class)
+        fun money(h: String): Long? {
             val t = r.text(k(h))
-            if (t.isEmpty()) { if (required) issues += ImportIssue(sheet, r.line, "$cls: $h is blank – row skipped", true); return if (required) null else 0 }
+            if (t.isEmpty()) return null
             val v = r.number(k(h))
-            if (v == null || v < 0) { issues += ImportIssue(sheet, r.line, "$cls: $h '$t' is not a valid amount – row skipped", true); return null }
+            if (v == null || v < 0) { issues += ImportIssue(sheet, r.line, "$cls: $h '$t' is not a valid amount – row skipped", true); bad = true; return null }
             return Math.round(v)
         }
-        fun int(h: String, range: IntRange, default: Int): Int {
+        fun int(h: String, range: IntRange): Int? {
             val t = r.text(k(h))
-            if (t.isEmpty()) return default
+            if (t.isEmpty()) return null
             val v = r.number(k(h))?.toInt()
-            return if (v != null && v in range) v else { issues += ImportIssue(sheet, r.line, "$cls: $h '$t' must be ${range.first}–${range.last} – $default used", false); default }
+            return if (v != null && v in range) v else { issues += ImportIssue(sheet, r.line, "$cls: $h '$t' must be ${range.first}–${range.last} – current value kept", false); null }
         }
-        val training = money("Training Fee", true) ?: return null
-        val dm = money("Book Day-Myanmar", false) ?: return null
-        val di = money("Book Day-Intl", false) ?: return null
-        val hm = money("Book Hostel-Myanmar", false) ?: return null
-        val hi = money("Book Hostel-Intl", false) ?: return null
-        val hostel = money("Hostel Fee", false) ?: return null
-        return ClassRate(cls, 0, training, dm, di, hm, hi, hostel, int("Start Month", 1..12, 6), int("Start Day", 1..31, 1), int("Period (Months)", 1..24, 12))
+        val u = ClassRateUpdate(
+            cls, money("Training Fee"), money("Book Day-Myanmar"), money("Book Day-Intl"), money("Book Hostel-Myanmar"), money("Book Hostel-Intl"), money("Hostel Fee"),
+            int("Start Month", 1..12), int("Start Day", 1..31), int("Period (Months)", 1..24),
+        )
+        return if (bad) null else u
     }
 
     // ------------------------------------------------------------- templates

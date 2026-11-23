@@ -162,9 +162,18 @@ object WorkbookImporter {
             val period = periodCol?.let { s.number(r, it)?.toInt() }?.takeIf { it in 1..24 }
             val key = (code ?: enrollNo ?: name.lowercase(Locale.US)) + "|" + cls + "|" + (year ?: "")
             if (!seen.add(key)) { issues += ImportIssue(sheetName, r, "$name ($cls${year?.let { " $it" } ?: ""}) appears more than once – duplicate skipped", true); continue }
+            // A register exported by this app (it has the Student ID column) holds the APPROVED fee amounts as
+            // values: keep them, so balances do not change when rates changed since. The original workbook
+            // holds formulas (with the two known errors), so its amounts are recalculated instead.
+            val approved = if (codeCol == null) null else {
+                val amounts = (7..12).map { c -> s.cell(r, c).let { cell -> if (cell == null || cell.isBlank) 0.0 else s.number(r, c) } }
+                if (amounts.any { it == null || it < 0 }) null else com.school.feemanager.domain.FeeAssessment(
+                    Math.round(amounts[0]!!), Math.round(amounts[1]!!), Math.round(amounts[2]!!), Math.round(amounts[3]!!), Math.round(amounts[4]!!), Math.round(amounts[5]!!), bp,
+                ).takeIf { f -> s.number(r, 16)?.let { Math.round(it) == f.netTotal } ?: true }
+            }
             out += ImportedStudent(
                 sheetName, r, code, enrollNo, name, s.text(r, 20),
-                ImportedEnrollment(cls, year, start, period, type, status, book, bp, term, ""),
+                ImportedEnrollment(cls, year, start, period, type, status, book, bp, term, "", approved),
             )
         }
         return out

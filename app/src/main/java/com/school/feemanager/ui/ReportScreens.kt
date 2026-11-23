@@ -2,8 +2,6 @@
 
 package com.school.feemanager.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +36,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.school.feemanager.data.AppSnapshot
 import com.school.feemanager.domain.PayStatus
@@ -46,7 +43,6 @@ import com.school.feemanager.domain.ReportFilter
 import com.school.feemanager.domain.ReportType
 import com.school.feemanager.domain.Reports
 import com.school.feemanager.io.HtmlDocs
-import com.school.feemanager.util.Printer
 import java.time.LocalDate
 
 private fun ReportType.description(): String = when (this) {
@@ -95,20 +91,16 @@ fun ReportViewScreen(vm: AppViewModel, snap: AppSnapshot, type: ReportType, onBa
     var inactive by rememberSaveable { mutableStateOf(false) }
     val filter = ReportFilter(from, to, cls, search, status, inactive)
     val table = Reports.build(type, snap.ledgers, snap.payments, snap.card.classNames, filter, today)
-    val context = LocalContext.current
+    val platform = LocalPlatform.current
     val fileBase = type.title.replace(" ", "_") + "_" + today
-    val excelLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) { uri ->
-        if (uri != null) vm.exportReport(uri, table, asPdf = false)
-    }
-    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        if (uri != null) vm.exportReport(uri, table, asPdf = true)
-    }
+    val excelLauncher = rememberFileSaver("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") { f -> vm.exportReport(f, table, asPdf = false) }
+    val pdfLauncher = rememberFileSaver("application/pdf") { f -> vm.exportReport(f, table, asPdf = true) }
 
     Column(Modifier.fillMaxSize()) {
         AppTopBar(type.title, onBack) {
-            IconButton(onClick = { excelLauncher.launch("$fileBase.xlsx") }) { Icon(Icons.Default.TableChart, contentDescription = "Export to Excel") }
-            IconButton(onClick = { pdfLauncher.launch("$fileBase.pdf") }) { Icon(Icons.Default.PictureAsPdf, contentDescription = "Export to PDF") }
-            IconButton(onClick = { Printer.printHtml(context, HtmlDocs.report(table, snap.settings.schoolName), type.title, isReport = true) }) {
+            IconButton(onClick = { excelLauncher("$fileBase.xlsx") }) { Icon(Icons.Default.TableChart, contentDescription = "Export to Excel") }
+            IconButton(onClick = { pdfLauncher("$fileBase.pdf") }) { Icon(Icons.Default.PictureAsPdf, contentDescription = "Export to PDF") }
+            IconButton(onClick = { platform.printHtml(HtmlDocs.report(table, snap.settings.schoolName), type.title, isReport = true) }) {
                 Icon(Icons.Default.Print, contentDescription = "Print")
             }
         }
