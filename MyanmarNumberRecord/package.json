@@ -1,0 +1,42 @@
+{
+  "name": "myanmar-number-record",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Myanmar 2D & 3D Number Record Management (offline, SQLite)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:single": "tsc --noEmit && vite build --mode single",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "e2e": "node e2e/run-e2e.mjs",
+    "android:sync": "vite build && npx cap sync android",
+    "android:apk": "vite build && npx cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/filesystem": "^7.1.4",
+    "@capacitor/share": "^7.0.2",
+    "@fontsource/noto-sans-myanmar": "^5.2.6",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sql.js": "^1.13.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/cli": "^7.4.3",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/sql.js": "^1.4.9",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.6.3",
+    "vite": "^6.3.5",
+    "vite-plugin-singlefile": "^2.3.0",
+    "vitest": "^3.1.4"
+  }
+}

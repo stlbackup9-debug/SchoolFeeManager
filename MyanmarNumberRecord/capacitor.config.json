@@ -1,0 +1,6 @@
+{
+  "appId": "com.mm.numberrecord",
+  "appName": "2D3D Record",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false }
+}

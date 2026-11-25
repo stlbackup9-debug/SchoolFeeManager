@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">2D·3D Records</string>
+    <string name="title_activity_main">2D·3D Records</string>
+    <string name="package_name">com.mm.numberrecord</string>
+    <string name="custom_url_scheme">com.mm.numberrecord</string>
+</resources>

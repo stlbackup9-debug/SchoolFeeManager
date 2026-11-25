@@ -1,3 +1,5 @@
+> **Also in this repository:** [`MyanmarNumberRecord/`](MyanmarNumberRecord/README.md): the offline Myanmar 2D & 3D Number Record Manager (Android APK + desktop).
+
 # School Fee Manager (Android)
 
 Offline school fee management app converted from `School_Fee_Management.xlsx`.
