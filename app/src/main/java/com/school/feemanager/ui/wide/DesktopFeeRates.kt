@@ -65,6 +65,8 @@ private class RateRow(r: ClassRate) {
     val startMonth = mutableStateOf(r.startMonth)
     val startDay = mutableStateOf(r.startDay.toString())
     val period = mutableStateOf(r.periodMonths.toString())
+    val common = mutableStateOf(r.commonFees)
+    val options = mutableStateOf(r.options)
 
     val money: List<MutableState<String>> get() = listOf(training, dm, di, hm, hi, hostel)
 
@@ -73,7 +75,7 @@ private class RateRow(r: ClassRate) {
         val v = money.map { it.value.toLongOrNull() ?: return null }
         val day = startDay.value.toIntOrNull()?.takeIf { it in 1..31 } ?: return null
         val p = period.value.toIntOrNull()?.takeIf { it in 1..24 } ?: return null
-        return ClassRate(n, i, v[0], v[1], v[2], v[3], v[4], v[5], startMonth.value, day, p)
+        return ClassRate(n, i, v[0], v[1], v[2], v[3], v[4], v[5], startMonth.value, day, p, common.value, options.value)
     }
 }
 
@@ -92,6 +94,7 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
     var confirm by remember { mutableStateOf(false) }
     var offerRecalc by remember { mutableStateOf(false) }
     var addOpen by remember { mutableStateOf(false) }
+    var optionsFor by remember { mutableStateOf<RateRow?>(null) }
     val edit = session.isAdmin
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
     val used = snap.ledgers.flatMap { l -> l.enrollments.map { it.enrollment.className } }.toSet()
@@ -123,15 +126,15 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
                     LabeledInput("Default months", months, { months = it.digits(2) }, edit, Modifier.weight(1f), isError = months.toIntOrNull() !in 1..24)
                 }
                 Spacer(Modifier.height(10.dp))
-                Text("Laundry is charged for each month of a hostel enrollment's period (12 months = ${Money.mmk((laundry.toLongOrNull() ?: 0) * 12)}).",
+                Text("Laundry is charged for each month of a hostel enrollment's period (12 months = ${Money.mmk((laundry.toLongOrNull() ?: 0) * 12)}). Instrument and entrance fee apply only to classes ticked in “Fees for all students” below.",
                     style = MaterialTheme.typography.bodyMedium, color = School.Muted)
             }
 
             Panel("Fees by class") {
-                val w = listOf(0.72f, 0.95f, 0.95f, 0.95f, 0.95f, 0.95f, 1.02f, 1.05f, 0.47f, 0.9f)
+                val w = listOf(0.72f, 0.95f, 0.95f, 0.95f, 0.95f, 0.95f, 1.02f, 1.05f, 0.47f, 0.72f, 1.0f)
                 // the table keeps a usable width; it scrolls sideways at large scales
                 androidx.compose.foundation.layout.BoxWithConstraints {
-                val minW = 1180.dp
+                val minW = 1420.dp
                 val boxW = maxWidth
                 val narrow = boxW < minW
                 val hs = androidx.compose.foundation.rememberScrollState()
@@ -139,9 +142,10 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
                 Column(Modifier.then(if (narrow) Modifier.width(minW) else Modifier).border(1.dp, School.Line, RoundedCornerShape(10.dp))) {
                     Row(Modifier.fillMaxWidth().background(School.TableHeader, RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)).heightIn(min = 72.dp).padding(horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        listOf("Class", "A) Training", "C) Book Day–Myanmar", "Book Day–Intl", "Book Hostel–Myanmar", "Book Hostel–Intl", "D) Hostel fee", "Year starts", "Day", "Months")
+                        listOf("Class", "A) Training", "C) Book Day–Myanmar", "Book Day–Intl", "Book Hostel–Myanmar", "Book Hostel–Intl", "D) Hostel fee", "Year starts", "Day", "Months", "Fees for all students")
                             .forEachIndexed { i, h -> HeadCell(h, w[i]) }
-                        Box(Modifier.width(86.dp))
+                        Box(Modifier.width(150.dp)) { Text("Student choices", color = School.Navy, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 8.dp)) }
+                        Box(Modifier.width(80.dp))
                     }
                     rows.forEachIndexed { i, r ->
                         val dup = r.name.value.trim().uppercase(Locale.ROOT) in dupNames
@@ -154,7 +158,15 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
                             }
                             TableInput(r.startDay.value, { r.startDay.value = it.digits(2) }, edit, w[8], numeric = true, isError = r.startDay.value.toIntOrNull() !in 1..31)
                             TableInput(r.period.value, { r.period.value = it.digits(2) }, edit, w[9], numeric = true, isError = r.period.value.toIntOrNull() !in 1..24)
-                            Box(Modifier.width(86.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.weight(w[10]), contentAlignment = Alignment.Center) {
+                                androidx.compose.material3.Checkbox(r.common.value, { r.common.value = it }, enabled = edit)
+                            }
+                            Column(Modifier.width(150.dp).padding(horizontal = 8.dp)) {
+                                val t = r.options.value.count { it.kind == com.school.feemanager.domain.FeeKind.TRAINING }
+                                val b = r.options.value.size - t
+                                LinkText(if (t + b == 0) (if (edit) "Add choices…" else "None") else "$t training, $b book", { optionsFor = r })
+                            }
+                            Box(Modifier.width(80.dp), contentAlignment = Alignment.Center) {
                                 if (edit && r.original !in used) LinkText("Remove", { rows.removeAt(i) }, color = School.Red)
                             }
                         }
@@ -169,7 +181,7 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
                     when {
                         dupNames.isNotEmpty() -> "Class names must be unique: ${dupNames.joinToString()}."
                         newCard == null -> "Every amount must be a whole number; day 1–31; months 1–24 (fields in red)."
-                        else -> "Classes that students are enrolled in cannot be renamed or removed. “Year starts” + “Day” is the academic-year start date and “Months” the period – the defaults when a student is enrolled in the class. Laundry is not per class (see above)."
+                        else -> "Classes that students are enrolled in cannot be renamed or removed. “Year starts” + “Day” is the academic-year start date and “Months” the period – the defaults when a student is enrolled in the class (the period can still be changed per student). Untick “Fees for all students” for classes that do not pay the instrument and entrance fee. “Student choices” are extra training / book fees a student can pick when enrolled. Laundry is not per class (see above)."
                     },
                     color = if (newCard == null) School.Red else School.Muted, style = MaterialTheme.typography.bodyMedium,
                 )
@@ -200,6 +212,10 @@ fun DesktopFeeRatesPage(vm: AppViewModel, snap: AppSnapshot, session: Session, n
             },
             dismissButton = { TextButton(onClick = { addOpen = false }) { Text("Cancel") } },
         )
+    }
+    optionsFor?.let { r ->
+        com.school.feemanager.ui.FeeOptionsDialog(r.name.value, r.training.value.toLongOrNull() ?: 0, r.options.value, edit,
+            onDone = { r.options.value = it; optionsFor = null }, onDismiss = { optionsFor = null })
     }
     if (confirm && newCard != null) ConfirmDialog(
         title = "Save new fee rates?",

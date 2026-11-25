@@ -95,6 +95,16 @@ object WorkbookImporter {
             val m = s.number(r, 18)?.toInt(); val d = s.number(r, 19)?.toInt(); val p = s.number(r, 20)?.toInt()
             if (m in 1..12 && d in 1..31 && p in 1..24) yearInfo[norm(c)] = Triple(m!!, d!!, p!!)
         }
+        // F) "Fees for all students" flag and fee options written by this app (columns V–Y)
+        val extra = HashMap<String, Pair<Boolean, List<com.school.feemanager.domain.FeeOption>>>()
+        for (r in 1..s.maxRow) {
+            val c = s.text(r, 22)
+            if (!classRe.matches(c)) continue
+            val common = !Fields.no(s.text(r, 23))
+            val opts = (com.school.feemanager.domain.FeeOption.parseList(com.school.feemanager.domain.FeeKind.TRAINING, s.text(r, 24)) ?: emptyList()) +
+                (com.school.feemanager.domain.FeeOption.parseList(com.school.feemanager.domain.FeeKind.BOOK, s.text(r, 25)) ?: emptyList())
+            extra[norm(c)] = common to opts
+        }
         val defaults = FeeRateCard.workbookDefaults()
         val classes = training.keys.mapIndexed { i, c ->
             val b = book[c]
@@ -102,7 +112,8 @@ object WorkbookImporter {
             if (hostel[c] == null) issues += ImportIssue(RATES, 0, "Hostel fee for $c not found – set to 0", false)
             val y = yearInfo[c]
             ClassRate(c, i, training[c]!!, b?.get(0) ?: 0, b?.get(1) ?: 0, b?.get(2) ?: 0, b?.get(3) ?: 0, hostel[c] ?: 0,
-                y?.first ?: 6, y?.second ?: 1, y?.third ?: (months?.toInt()?.takeIf { it in 1..24 } ?: 12))
+                y?.first ?: 6, y?.second ?: 1, y?.third ?: (months?.toInt()?.takeIf { it in 1..24 } ?: 12),
+                extra[c]?.first ?: true, extra[c]?.second ?: emptyList())
         }
         return FeeRateCard(
             classes = classes,
@@ -129,6 +140,8 @@ object WorkbookImporter {
         val yearCol = headerCol(s, "Academic Year")
         val startCol = headerCol(s, "Start Date")
         val periodCol = headerCol(s, "Period (Months)")
+        val trainingCol = headerCol(s, "Training Option")
+        val booksCol = headerCol(s, "Book Options")
         for (r in 3..s.maxRow) {
             if (s.text(r, 1).equals("TOTALS", true)) break
             val name = s.text(r, 2)
@@ -150,11 +163,19 @@ object WorkbookImporter {
                 book = BookType.INTERNATIONAL
             }
             val bp = Fields.discountBp(s.cell(r, 14), name) { issues += ImportIssue(sheetName, r, it, false) }
-            var term = PaymentTerm.parse(s.text(r, 17))
-            if (term == null) {
+            var plan = com.school.feemanager.domain.PaymentPlan.parse(s.text(r, 17))
+            if (plan == null) {
                 issues += ImportIssue(sheetName, r, "$name: payment term '${s.text(r, 17)}' – 3-Inst used", false)
-                term = PaymentTerm.THREE_INST
+                plan = com.school.feemanager.domain.PaymentPlan(PaymentTerm.THREE_INST)
             }
+            val term = plan.term
+            val rate = card.rateFor(cls)!!
+            val rawChoice = com.school.feemanager.domain.FeeChoice.fromTexts(trainingCol?.let { s.text(r, it) }, booksCol?.let { s.text(r, it) })
+            val choice = rawChoice.copy(
+                training = rawChoice.training.let { t -> if (t == com.school.feemanager.domain.FeeChoice.STANDARD || t == com.school.feemanager.domain.FeeChoice.NONE) t
+                    else rate.option(com.school.feemanager.domain.FeeKind.TRAINING, t)?.name ?: com.school.feemanager.domain.FeeChoice.STANDARD },
+                books = rawChoice.books.mapNotNull { b -> rate.option(com.school.feemanager.domain.FeeKind.BOOK, b)?.name },
+            ).let { c -> c.copy(standardBook = c.standardBook || (c.books.isEmpty() && rawChoice.books.isNotEmpty())) }
             val code = codeCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }
             val enrollNo = enrollCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }
             val year = yearCol?.let { s.text(r, it) }?.takeIf { it.isNotEmpty() }
@@ -173,7 +194,7 @@ object WorkbookImporter {
             }
             out += ImportedStudent(
                 sheetName, r, code, enrollNo, name, s.text(r, 20),
-                ImportedEnrollment(cls, year, start, period, type, status, book, bp, term, "", approved),
+                ImportedEnrollment(cls, year, start, period, type, status, book, bp, term, "", approved, plan.parts, plan.everyMonths, choice),
             )
         }
         return out

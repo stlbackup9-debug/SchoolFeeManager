@@ -1,5 +1,6 @@
 package com.school.feemanager.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -26,6 +27,10 @@ data class FeeRateEntity(
     val startMonth: Int = 6,
     val startDay: Int = 1,
     val periodMonths: Int = 12,
+    /** v3: the "Fees for all students" (instrument, entrance) apply to this class */
+    @ColumnInfo(defaultValue = "1") val commonFees: Boolean = true,
+    /** v3: extra training / book fees students can choose (FeeOption.encode) */
+    @ColumnInfo(defaultValue = "") val feeOptions: String = "",
 )
 
 /** Single-row table: school profile, global fee rates and number sequences. */
@@ -101,6 +106,11 @@ data class EnrollmentEntity(
     val discountAmount: Long,
     val netTotal: Long,
     val assessedAt: Long,
+    /** v3: CUSTOM payment term – number of installments and months between them (0 = evenly) */
+    @ColumnInfo(defaultValue = "0") val termParts: Int = 0,
+    @ColumnInfo(defaultValue = "0") val termEvery: Int = 0,
+    /** v3: chosen training / book options (FeeChoice.encode, "" = standard fees) */
+    @ColumnInfo(defaultValue = "") val feeChoice: String = "",
 )
 
 @Entity(

@@ -51,7 +51,7 @@ import javax.swing.JOptionPane
 import kotlin.system.exitProcess
 
 const val APP_NAME = "School Fee Manager"
-const val APP_VERSION = "1.2.0"
+const val APP_VERSION = "1.3.0"
 
 /** Where the database lives: %APPDATA%\SchoolFeeManager on Windows, ~/.schoolfeemanager elsewhere. Not inside the program folder, so updates and uninstalling keep the data. */
 fun dataDir(): File {

@@ -2,6 +2,8 @@
 
 package com.school.feemanager.ui
 
+import androidx.compose.material3.Checkbox
+import com.school.feemanager.domain.FeeKind
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -144,6 +146,8 @@ private class RateRow(r: ClassRate) {
     val startMonth = mutableStateOf(r.startMonth)
     val startDay = mutableStateOf(r.startDay.toString())
     val period = mutableStateOf(r.periodMonths.toString())
+    val common = mutableStateOf(r.commonFees)
+    val options = mutableStateOf(r.options)
     val original = r.className
 
     fun toRate(i: Int): ClassRate? {
@@ -151,7 +155,7 @@ private class RateRow(r: ClassRate) {
         val day = startDay.value.toIntOrNull()?.takeIf { it in 1..31 } ?: return null
         val p = period.value.toIntOrNull()?.takeIf { it in 1..24 } ?: return null
         return ClassRate(name.value.trim().uppercase(), i, v(training) ?: return null, v(dm) ?: return null, v(di) ?: return null, v(hm) ?: return null, v(hi) ?: return null, v(hostel) ?: return null,
-            startMonth.value, day, p)
+            startMonth.value, day, p, common.value, options.value)
     }
 }
 
@@ -166,6 +170,7 @@ fun FeeRatesScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack
     var confirm by remember { mutableStateOf(false) }
     var offerRecalc by remember { mutableStateOf(false) }
     var newClass by remember { mutableStateOf("") }
+    var optionsFor by remember { mutableStateOf<RateRow?>(null) }
     val edit = session.isAdmin
     val used = snap.ledgers.flatMap { l -> l.enrollments.map { it.enrollment.className } }.toSet()
 
@@ -213,6 +218,28 @@ fun FeeRatesScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack
                         OutlinedTextField(r.period.value, { r.period.value = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Months") }, enabled = edit, singleLine = true,
                             isError = r.period.value.toIntOrNull() !in 1..24, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(0.8f))
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable(enabled = edit) { r.common.value = !r.common.value }) {
+                        Checkbox(r.common.value, { r.common.value = it }, enabled = edit)
+                        Column {
+                            Text("Fees for all students")
+                            Text(if (r.common.value) "Instrument fee and entrance fee (new students) apply" else "This class does not pay the instrument / entrance fee",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    val t = r.options.value.filter { it.kind == FeeKind.TRAINING }
+                    val b = r.options.value.filter { it.kind == FeeKind.BOOK }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Student choices", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                if (t.isEmpty() && b.isEmpty()) "Only the standard training and book fees"
+                                else listOfNotNull(t.takeIf { it.isNotEmpty() }?.let { "Training: " + it.joinToString { o -> "${o.name} ${Money.format(o.amount)}" } },
+                                    b.takeIf { it.isNotEmpty() }?.let { "Books: " + it.joinToString { o -> "${o.name} ${Money.format(o.amount)}" } }).joinToString("\n"),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        TextButton(onClick = { optionsFor = r }) { Text(if (edit) "Edit" else "View") }
+                    }
                 }
             }
             if (edit) {
@@ -231,6 +258,10 @@ fun FeeRatesScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, onBack
             }
             Spacer(Modifier.height(24.dp))
         }
+    }
+    optionsFor?.let { r ->
+        FeeOptionsDialog(r.name.value, r.training.value.toLongOrNull() ?: 0, r.options.value, edit,
+            onDone = { r.options.value = it; optionsFor = null }, onDismiss = { optionsFor = null })
     }
     if (confirm && newCard != null) ConfirmDialog(
         title = "Save new fee rates?",
@@ -264,7 +295,7 @@ fun SchoolProfileScreen(vm: AppViewModel, snap: AppSnapshot, session: Session, o
             OutlinedTextField(prefix, { prefix = it.filter { c -> c.isLetterOrDigit() }.take(8).uppercase() }, label = { Text("Receipt number prefix") }, singleLine = true,
                 supportingText = { Text("Receipts look like $prefix-${snap.today.year}-000123") }, modifier = Modifier.fillMaxWidth())
             DateField("Default academic year start", start, { if (it != null) start = it })
-            Text("Used as the start for classes you add later. Each class has its own start date and period (Settings → Fee rates), and each enrollment keeps its own dates. 3-Inst: due at start, +⅓ and +⅔ of the period. Monthly: one per month.",
+            Text("Used as the start for classes you add later. Each class has its own start date and period (Settings → Fee rates), and each enrollment keeps its own dates. 3-Inst: due at start, +⅓ and +⅔ of the period. Monthly: one per month. Full payment: everything at the start. Custom: the number of installments you choose.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { vm.saveSchool(name, address, phone, prefix, start, onBack) }, enabled = session.isAdmin && name.isNotBlank() && prefix.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Save") }
         }

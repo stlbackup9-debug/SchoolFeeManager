@@ -9,6 +9,9 @@ import com.school.feemanager.data.PayItem
 import com.school.feemanager.data.PaymentRequest
 import com.school.feemanager.data.StudentForm
 import com.school.feemanager.domain.BookType
+import com.school.feemanager.domain.FeeChoice
+import com.school.feemanager.domain.FeeKind
+import com.school.feemanager.domain.FeeOption
 import com.school.feemanager.domain.PayStatus
 import com.school.feemanager.domain.PaymentTerm
 import com.school.feemanager.domain.ReportFilter
@@ -254,8 +257,8 @@ class RepositoryTest {
         // the backup has Room's version and identity, so the Android app accepts it
         val bf = File(tmp.root, "b.db").apply { writeBytes(backup) }
         DriverManager.getConnection("jdbc:sqlite:" + bf.absolutePath).use { c ->
-            c.createStatement().executeQuery("PRAGMA user_version").use { it.next(); assertEquals(2, it.getInt(1)) }
-            c.createStatement().executeQuery("SELECT identity_hash FROM room_master_table").use { assertTrue(it.next()) }
+            c.createStatement().executeQuery("PRAGMA user_version").use { it.next(); assertEquals(3, it.getInt(1)) }
+            c.createStatement().executeQuery("SELECT identity_hash FROM room_master_table").use { assertTrue(it.next()); assertTrue(com.school.feemanager.data.MigrationSql.CREATE_ALL_V3.last().contains(it.getString(1))) }
         }
         repo.saveStudent(null, StudentForm("", "After Backup", ""), null, "admin")
         assertEquals(2, snap().ledgers.size)
@@ -289,5 +292,98 @@ class RepositoryTest {
         assertEquals(550000L, kid.net); assertEquals(100000L, kid.paid)
         assertEquals("RCP-2026-000001", s.receipts.single().receiptNo)
         assertEquals("2026-2027".takeIf { june.year == 2026 } ?: academicYearLabel(june, 12), kid.enrollments.single().enrollment.academicYear)
+    }
+
+    /** 1.3: "Fees for all students" per class, training / book choices, Full and custom payment terms – saved, paid, exported and re-imported. */
+    @Test fun feeChoicesAndPaymentTerms() = runBlocking {
+        val c0 = snap().card
+        val card = c0.copy(classes = c0.classes.map {
+            when (it.className) {
+                "G-3" -> it.copy(options = listOf(FeeOption(FeeKind.TRAINING, "Advanced", 300000), FeeOption(FeeKind.BOOK, "Workbook", 15000)))
+                "G-5" -> it.copy(commonFees = false)
+                else -> it
+            }
+        })
+        repo.saveRates(card, "admin")
+        assertEquals(card.classes.map { it.copy(sortOrder = 0) }, snap().card.classes.map { it.copy(sortOrder = 0) })
+
+        val a = repo.saveStudent(null, StudentForm("EN-1", "Aung Aung", ""),
+            form("G-3", june, 12, PaymentTerm.CUSTOM).copy(termParts = 4, termEvery = 3, choice = FeeChoice("Advanced", true, listOf("Workbook"))), "admin")
+        val b = repo.saveStudent(null, StudentForm("EN-2", "Su Su", ""), form("G-5", june, 12, PaymentTerm.FULL), "admin")
+        fails { repo.saveStudent(null, StudentForm("EN-3", "X", ""), form("G-3", june, 12, PaymentTerm.MONTHLY).copy(choice = FeeChoice("Gold")), "admin") }
+        fails { repo.saveStudent(null, StudentForm("EN-4", "Y", ""), form("G-3", june, 12, PaymentTerm.CUSTOM).copy(termParts = 30), "admin") }
+
+        var s = snap()
+        val ea = s.ledger(a)!!.enrollments.single()
+        // 300,000 advanced training + 200,000 instrument + 30,000 + 15,000 books + 100,000 entrance
+        assertEquals(645000L, ea.net)
+        assertEquals("4-Inst every 3 months", ea.enrollment.termText)
+        assertEquals(listOf(june, june.plusMonths(3), june.plusMonths(6), june.plusMonths(9)), ea.lines.map { it.line.dueDate })
+        val eb = s.ledger(b)!!.enrollments.single()
+        assertEquals(0L, eb.fee.instrumentFee); assertEquals(0L, eb.fee.entranceFee)        // G-5 does not take the fees for all students
+        assertEquals(1, eb.lines.size); assertEquals("Full payment", eb.enrollment.termText)
+
+        // pay installment 2 of Aung Aung and Su Su's full payment on one receipt
+        repo.recordPayment(PaymentRequest(june.coerceAtMost(today), listOf(
+            PayItem(a, ea.enrollment.id, 2, ea.lines[1].line.amount, "G-3 Installment 2"), PayItem(b, eb.enrollment.id, 1, eb.net, "G-5 Full payment"),
+        ), ""), "admin")
+        s = snap()
+        assertEquals(PayStatus.PAID, s.ledger(b)!!.paymentState)
+        assertEquals(PayStatus.PAID, s.ledger(a)!!.enrollments.single().lines[1].status)
+
+        // changing the choice re-assesses: no workbook any more
+        val f = form("G-3", june, 12, PaymentTerm.CUSTOM).copy(academicYear = ea.enrollment.academicYear, termParts = 4, termEvery = 3, choice = FeeChoice("Advanced"))
+        repo.saveEnrollment(ea.enrollment.id, a, f, "admin")
+        assertEquals(630000L, snap().ledger(a)!!.net)
+
+        // workbook export → import into a new database keeps the choices and terms
+        s = snap()
+        val bytes = WorkbookExporter.export("School", s.ledgers, s.payments, s.card, s.dashboard)
+        val other = JdbcFeeStore(File(tmp.root, "other3.db"))
+        val repo2 = FeeRepository(other)
+        repo2.ensureSeeded()
+        val imp = WorkbookImporter.read(ByteArrayInputStream(bytes), repo2.snapshot().first().card)
+        assertEquals(emptyList<Any>(), imp.errors)
+        repo2.applyImport(imp, true, false, "admin")
+        val s2 = repo2.snapshot().first()
+        assertEquals(false, s2.card.rateFor("G-5")!!.commonFees)
+        assertEquals(card.rateFor("G-3")!!.options, s2.card.rateFor("G-3")!!.options)
+        val a2 = s2.ledgers.single { it.student.enrollNo == "EN-1" }.enrollments.single().enrollment
+        assertEquals(FeeChoice("Advanced"), a2.choice); assertEquals("4-Inst every 3 months", a2.termText)
+        assertEquals(s.ledgers.map { it.student.code to it.balance }.sortedBy { it.first }, s2.ledgers.map { it.student.code to it.balance }.sortedBy { it.first })
+        other.close()
+
+        // the data is in the file: a new store on the same file reads it back
+        store.close()
+        store = JdbcFeeStore(File(tmp.root, "school_fees.db"))
+        repo = FeeRepository(store)
+        assertEquals(FeeChoice("Advanced"), snap().ledger(a)!!.enrollments.single().enrollment.choice)
+    }
+
+    /** A version-2 database (app 1.1 / 1.2, phone backup or PC) is upgraded in place when opened. */
+    @Test fun version2DatabaseIsUpgraded() = runBlocking {
+        val f = File(tmp.root, "v2.db")
+        DriverManager.getConnection("jdbc:sqlite:${f.absolutePath}").use { c ->
+            c.createStatement().use { st ->
+                com.school.feemanager.data.MigrationSql.CREATE_ALL_V2.forEach { st.execute(it) }
+                st.execute("INSERT INTO fee_rates (className, sortOrder, trainingFee, bookDayMyanmar, bookDayIntl, bookHostelMyanmar, bookHostelIntl, hostelFee, startMonth, startDay, periodMonths) VALUES ('G-3', 0, 220000, 30000, 36000, 33000, 40000, 950000, 6, 1, 12)")
+                st.execute("INSERT INTO school_settings (id, schoolName, address, phone, instrumentFee, laundryPerMonth, monthsPerYear, entranceFee, academicYearStart, receiptPrefix, nextReceiptSeq, nextStudentSeq, ratesUpdatedAt) VALUES (1, 'Old School', '', '', 200000, 70000, 12, 100000, ${june.toEpochDay()}, 'RCP', 1, 2, 0)")
+                st.execute("INSERT INTO students (code, enrollNo, name, nameKey, remarks, active, registeredOn, updatedAt) VALUES ('STU-0001', NULL, 'Kyaw', 'kyaw', '', 1, 0, 0)")
+                st.execute("INSERT INTO enrollments (studentId, className, academicYear, startDate, periodMonths, studentType, studentStatus, bookType, paymentTerm, discountBp, remarks, active, createdOn, updatedAt, trainingFee, instrumentFee, bookFee, hostelFee, laundryFee, entranceFee, grossTotal, discountAmount, netTotal, assessedAt) VALUES (1, 'G-3', '2026-2027', ${june.toEpochDay()}, 12, 'DAY', 'NEW', 'MYANMAR', 'THREE_INST', 0, '', 1, 0, 0, 220000, 200000, 30000, 0, 0, 100000, 550000, 0, 550000, 0)")
+                st.execute("INSERT INTO users (username, fullName, role, passwordHash, salt, active, mustChangePassword) VALUES ('admin', 'A', 'ADMIN', 'x', 'y', 1, 0)")
+                st.execute("PRAGMA user_version = 2")
+            }
+        }
+        val old = JdbcFeeStore(f)
+        val r = FeeRepository(old)
+        val s = r.snapshot().first()
+        assertEquals("Old School", s.settings.schoolName)
+        assertEquals(550000L, s.ledgers.single().net)
+        assertEquals(FeeChoice.DEFAULT, s.ledgers.single().enrollments.single().enrollment.choice)
+        assertEquals(true, s.card.rateFor("G-3")!!.commonFees)
+        old.close()
+        DriverManager.getConnection("jdbc:sqlite:${f.absolutePath}").use { c ->
+            c.createStatement().use { st -> st.executeQuery("PRAGMA user_version").use { rs -> rs.next(); assertEquals(3, rs.getInt(1)) } }
+        }
     }
 }

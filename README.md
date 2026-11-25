@@ -11,6 +11,8 @@ Kotlin · Jetpack Compose (Material 3) · MVVM · Room (SQLite) · min Android 8
 
 ## Building the APK
 
+> **New in v1.3:** payment terms *Full payment* and *Custom installments* (number of installments, optionally every N months); per class "Fees for all students" on/off (instrument + entrance fee); extra training and book fees per class that each student can choose. Database version 3 (older phone and PC databases and backups are upgraded automatically).
+>
 > **Status (v1.2):** phone/tablet adaptive layout, colours, Night mode and Scale & Layout on Android (see below). **v1.1:** the app compiles cleanly (`assembleDebug` / `assembleRelease`, no compiler warnings, no lint errors) and all 25 unit tests pass, including the v1 → v2 database migration; 550/550 values match the workbook. New in 1.1: Enroll No., several classes per student (each with its own academic year, start date and period), a Payables tab with multi-select payment, combined receipts, and Excel/CSV import for students, class enrollments, payments and fee rates. To build it yourself in Android Studio:
 
 1. Install **Android Studio** (Ladybug 2024.2 or newer) – https://developer.android.com/studio
@@ -21,7 +23,7 @@ Kotlin · Jetpack Compose (Material 3) · MVVM · Room (SQLite) · min Android 8
 
 Command line alternative (Android SDK installed, `ANDROID_HOME` set):
 ```
-./gradlew test            # 25 unit tests (business rules, import/export, multi-class, migration)
+./gradlew test            # 30 unit tests (business rules, import/export, multi-class, migration)
 ./gradlew assembleRelease # app/build/outputs/apk/release/app-release.apk
 ```
 The release build is signed with the debug key so it installs directly. Before publishing on Google Play, create your own signing key (*Build → Generate Signed App Bundle / APK*).
@@ -36,7 +38,7 @@ The Android app now has the same look as the Windows version and adapts to the s
 
 ## Windows version
 The same app for Windows 10/11 (64-bit), built from the same source code (screens, rules, import/export, database logic).
-* **Install:** run `SchoolFeeManager-1.2.0-Setup.exe` (no admin rights needed; installs to `%LOCALAPPDATA%\Programs\School Fee Manager`, with Start-menu and desktop shortcuts). Or unzip `SchoolFeeManager-1.2.0-Windows-portable.zip` anywhere and run `SchoolFeeManager.exe`.
+* **Install:** run `SchoolFeeManager-1.3.0-Setup.exe` (no admin rights needed; installs to `%LOCALAPPDATA%\Programs\School Fee Manager`, with Start-menu and desktop shortcuts). Or unzip `SchoolFeeManager-1.3.0-Windows-portable.zip` anywhere and run `SchoolFeeManager.exe`.
 * The installer is not code-signed, so Windows SmartScreen may say *"Windows protected your PC"* – click **More info → Run anyway**.
 * **Data:** `%APPDATA%\SchoolFeeManager\school_fees.db` – kept when updating or uninstalling. The database format is identical to the phone's: a backup made on the phone (*Settings → Data → Back up now*) can be restored on the PC and vice versa (a 1.0 phone backup is upgraded automatically).
 * **Printing / PDF:** receipts and reports open in the default browser with its print dialog (choose a printer or *Microsoft Print to PDF*). Report *PDF* export writes a PDF file directly.

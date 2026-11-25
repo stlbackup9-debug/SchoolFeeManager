@@ -3,6 +3,8 @@ package com.school.feemanager.io
 import com.school.feemanager.domain.BookType
 import com.school.feemanager.domain.ClassRate
 import com.school.feemanager.domain.FeeAssessment
+import com.school.feemanager.domain.FeeChoice
+import com.school.feemanager.domain.FeeOption
 import com.school.feemanager.domain.FeeRateCard
 import com.school.feemanager.domain.PaymentTerm
 import com.school.feemanager.domain.StudentStatus
@@ -32,6 +34,9 @@ data class ImportedEnrollment(
     val remarks: String,
     /** The approved fee amounts, when the file was exported by this app (kept instead of recalculating). */
     val approvedFee: FeeAssessment? = null,
+    val termParts: Int = 0,
+    val termEvery: Int = 0,
+    val choice: FeeChoice = FeeChoice.DEFAULT,
 )
 
 /** One class row of a Fee rates import. Null = the cell was blank: keep the current value (0 / default for a new class). */
@@ -46,6 +51,11 @@ data class ClassRateUpdate(
     val startMonth: Int?,
     val startDay: Int?,
     val periodMonths: Int?,
+    /** null = keep current (true for a new class) */
+    val commonFees: Boolean? = null,
+    /** null = keep the current options */
+    val trainingOptions: List<FeeOption>? = null,
+    val bookOptions: List<FeeOption>? = null,
 ) {
     fun applyTo(old: ClassRate?, sortOrder: Int, defaultPeriod: Int): ClassRate = ClassRate(
         className = old?.className ?: className,
@@ -59,6 +69,8 @@ data class ClassRateUpdate(
         startMonth = startMonth ?: old?.startMonth ?: 6,
         startDay = startDay ?: old?.startDay ?: 1,
         periodMonths = periodMonths ?: old?.periodMonths ?: defaultPeriod,
+        commonFees = commonFees ?: old?.commonFees ?: true,
+        options = (trainingOptions ?: old?.trainingOptions ?: emptyList()) + (bookOptions ?: old?.bookOptions ?: emptyList()),
     )
 }
 

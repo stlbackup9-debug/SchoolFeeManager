@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -64,6 +65,9 @@ import com.school.feemanager.domain.EnrollmentLedger
 import com.school.feemanager.domain.EnrollmentRecord
 import com.school.feemanager.domain.FeeAssessment
 import com.school.feemanager.domain.FeeCalculator
+import com.school.feemanager.domain.FeeChoice
+import com.school.feemanager.domain.FeeKind
+import com.school.feemanager.domain.PaymentPlan
 import com.school.feemanager.domain.Money
 import com.school.feemanager.domain.PayStatus
 import com.school.feemanager.domain.PaymentTerm
@@ -243,8 +247,9 @@ private fun EnrollmentCard(vm: AppViewModel, snap: AppSnapshot, session: Session
             Row(Modifier.fillMaxWidth().clickable { open = !open }, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(e.title, style = MaterialTheme.typography.titleSmall, color = if (e.active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("From ${e.startDate.fmt()} · ${e.periodMonths} months · ${e.type.label} · ${e.term.label}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("From ${e.startDate.fmt()} · ${e.periodMonths} months · ${e.type.label} · ${e.termText}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Net ${Money.format(l.net)} · Paid ${Money.format(l.paid)} · Due ${Money.format(l.balance)}", style = MaterialTheme.typography.bodySmall)
+                    if (!e.choice.isStandard) Text(e.choice.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (!e.active) Text("Inactive", style = MaterialTheme.typography.labelSmall, color = Red)
                 }
                 StatusChip(l.status)
@@ -329,16 +334,35 @@ private class EnrollmentState(snap: AppSnapshot, e: EnrollmentRecord?, suggested
     var status by mutableStateOf(e?.status ?: suggestedStatus)
     var book by mutableStateOf(e?.bookType ?: BookType.MYANMAR)
     var term by mutableStateOf(e?.term ?: PaymentTerm.THREE_INST)
+    var parts by mutableStateOf((e?.termParts?.takeIf { it > 0 } ?: 4).toString())
+    var every by mutableStateOf((e?.termEvery ?: 0).toString())
     var discount by mutableStateOf(e?.discountBp?.let { Money.bpToPlain(it) } ?: "0")
     var remarks by mutableStateOf(e?.remarks ?: "")
+    // training option / book options of the class (FeeChoice)
+    var training by mutableStateOf(e?.choice?.training ?: FeeChoice.STANDARD)
+    var standardBook by mutableStateOf(e?.choice?.standardBook ?: true)
+    val books = mutableStateListOf<String>().apply { e?.choice?.books?.let { addAll(it) } }
 
     val bp: Int? get() = Money.parsePercentToBp(discount)
     val periodInt: Int? get() = period.toIntOrNull()?.takeIf { it in 1..24 }
-    val valid: Boolean get() = bp != null && periodInt != null && year.isNotBlank() && cls.isNotBlank()
+    val partsInt: Int? get() = if (term != PaymentTerm.CUSTOM) 0 else parts.toIntOrNull()?.takeIf { it in 1..PaymentPlan.MAX_PARTS }
+    val everyInt: Int? get() = if (term != PaymentTerm.CUSTOM) 0 else every.ifBlank { "0" }.toIntOrNull()?.takeIf { it in 0..24 }
+    val valid: Boolean get() = bp != null && periodInt != null && year.isNotBlank() && cls.isNotBlank() && partsInt != null && everyInt != null
 
     fun autoYear() { if (!yearEdited) periodInt?.let { year = academicYearLabel(start, it) } }
 
-    fun form() = EnrollmentForm(cls, year.trim(), start, periodInt ?: 12, type, status, book, bp ?: 0, term, remarks)
+    /** keeps only choices the (new) class offers */
+    fun fitChoice(snap: AppSnapshot) {
+        val r = snap.card.rateFor(cls)
+        if (training != FeeChoice.STANDARD && training != FeeChoice.NONE && r?.option(FeeKind.TRAINING, training) == null) training = FeeChoice.STANDARD
+        books.removeAll { r?.option(FeeKind.BOOK, it) == null }
+    }
+
+    val choice: FeeChoice get() = FeeChoice(training, standardBook, books.toList())
+
+    fun assess(snap: AppSnapshot): FeeAssessment = FeeCalculator.assess(snap.card, cls, type, status, book, bp ?: 0, periodInt ?: 12, choice)
+
+    fun form() = EnrollmentForm(cls, year.trim(), start, periodInt ?: 12, type, status, book, bp ?: 0, term, remarks, partsInt ?: 0, everyInt ?: 0, choice)
 }
 
 @Composable
@@ -346,6 +370,7 @@ private fun EnrollmentFields(snap: AppSnapshot, st: EnrollmentState, isNew: Bool
     Dropdown("Class", snap.card.classNames, st.cls, { it }, { c ->
         st.cls = c
         if (isNew) snap.card.rateFor(c)?.let { r -> st.start = r.defaultStart(snap.today); st.period = r.periodMonths.toString() }
+        st.fitChoice(snap)
         st.autoYear()
     })
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -363,21 +388,62 @@ private fun EnrollmentFields(snap: AppSnapshot, st: EnrollmentState, isNew: Bool
         Dropdown("Book type", BookType.entries, st.book, { it.label }, { st.book = it }, Modifier.weight(1f))
         Dropdown("Payment term", PaymentTerm.entries, st.term, { it.label }, { st.term = it }, Modifier.weight(1f))
     }
+    if (st.term == PaymentTerm.CUSTOM) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(st.parts, { st.parts = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Installments") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), isError = st.partsInt == null,
+            supportingText = { Text("1 – ${PaymentPlan.MAX_PARTS}") }, modifier = Modifier.weight(1f))
+        OutlinedTextField(st.every, { st.every = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Every … months") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), isError = st.everyInt == null,
+            supportingText = { Text("0 = spread over the period") }, modifier = Modifier.weight(1f))
+    }
+    ClassFeeChoices(snap, st)
     OutlinedTextField(st.discount, { st.discount = it.filter { c -> c.isDigit() || c == '.' }.take(6) }, label = { Text("Discount %") }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = st.bp == null,
         supportingText = { if (st.bp == null) Text("Enter 0 – 100") }, modifier = Modifier.fillMaxWidth())
     OutlinedTextField(st.remarks, { st.remarks = it }, label = { Text("Class remarks") }, modifier = Modifier.fillMaxWidth())
 }
 
+/** Training option, standard / extra books, and a note when the class has no "fees for all students". */
+@Composable
+private fun ClassFeeChoices(snap: AppSnapshot, st: EnrollmentState) {
+    val r = snap.card.rateFor(st.cls) ?: return
+    if (!r.commonFees) Text("${r.className} does not take the fees for all students (instrument fee, entrance fee).",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (r.trainingOptions.isNotEmpty()) {
+        val choices = listOf(FeeChoice.STANDARD) + r.trainingOptions.map { it.name } + FeeChoice.NONE
+        fun label(c: String) = when (c) {
+            FeeChoice.STANDARD -> "Standard – ${Money.format(r.trainingFee)}"
+            FeeChoice.NONE -> "No training fee"
+            else -> "$c – ${Money.format(r.option(FeeKind.TRAINING, c)?.amount ?: 0)}"
+        }
+        Dropdown("Training fee", choices, st.training, ::label, { st.training = it }, Modifier.fillMaxWidth())
+    }
+    if (r.bookOptions.isNotEmpty()) {
+        Text("Book fees", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { st.standardBook = !st.standardBook }) {
+            Checkbox(st.standardBook, { st.standardBook = it })
+            Text("Standard book (${st.type.label}, ${st.book.label}) – ${Money.format(r.standardBook(st.type, st.book))}")
+        }
+        r.bookOptions.forEach { o ->
+            val on = st.books.any { it.equals(o.name, true) }
+            fun toggle() { if (on) st.books.removeAll { it.equals(o.name, true) } else st.books.add(o.name) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { toggle() }) {
+                Checkbox(on, { toggle() })
+                Text("${o.name} – ${Money.format(o.amount)}")
+            }
+        }
+    }
+}
+
 @Composable
 private fun FeePreview(snap: AppSnapshot, st: EnrollmentState, fee: FeeAssessment, title: String, alreadyPaid: Long?) {
     SectionCard(title) {
         FeeBreakdown(fee)
-        val term = st.term
+        val plan = PaymentPlan(st.term, st.partsInt ?: 1, st.everyInt ?: 0)
         val period = st.periodInt ?: 12
-        val lines = ScheduleCalculator.generate(term, fee.netTotal, st.start, period)
+        val lines = ScheduleCalculator.generate(plan, fee.netTotal, st.start, period)
         Spacer(Modifier.height(4.dp))
-        Text("${term.label}: ${lines.size} payments of ${lines.map { it.amount }.distinct().joinToString(" / ") { Money.format(it) }}, first due ${lines.firstOrNull()?.dueDate?.fmt() ?: "–"}, last due ${lines.lastOrNull()?.dueDate?.fmt() ?: "–"}",
+        Text("${plan.label}: ${lines.size} payment${if (lines.size == 1) "" else "s"} of of ${lines.map { it.amount }.distinct().joinToString(" / ") { Money.format(it) }}, first due ${lines.firstOrNull()?.dueDate?.fmt() ?: "–"}, last due ${lines.lastOrNull()?.dueDate?.fmt() ?: "–"}",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (alreadyPaid != null) KeyValue("Already paid", Money.mmk(alreadyPaid))
     }
@@ -424,7 +490,7 @@ fun StudentEditScreen(vm: AppViewModel, snap: AppSnapshot, id: Long?, onBack: ()
                 }
                 if (withClass) {
                     SectionCard("Class") { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { EnrollmentFields(snap, st, isNew = true) } }
-                    val fee = FeeCalculator.assess(snap.card, st.cls, st.type, st.status, st.book, st.bp ?: 0, st.periodInt ?: 12)
+                    val fee = st.assess(snap)
                     FeePreview(snap, st, fee, "Fee calculation (current rates)", null)
                 }
             } else {
@@ -450,8 +516,9 @@ fun EnrollmentEditScreen(vm: AppViewModel, snap: AppSnapshot, studentId: Long, e
     val st = remember { EnrollmentState(snap, existing?.enrollment, suggested, if (l.enrollments.isEmpty()) StudentStatus.NEW else StudentStatus.OLD) }
     var confirm by remember { mutableStateOf(false) }
     val e0 = existing?.enrollment
-    val preview = FeeCalculator.assess(snap.card, st.cls, st.type, st.status, st.book, st.bp ?: 0, st.periodInt ?: 12)
-    val feeChanged = e0 != null && (e0.className != st.cls || e0.type != st.type || e0.status != st.status || e0.bookType != st.book || e0.discountBp != (st.bp ?: 0) || e0.periodMonths != st.periodInt)
+    val preview = st.assess(snap)
+    val feeChanged = e0 != null && (e0.className != st.cls || e0.type != st.type || e0.status != st.status || e0.bookType != st.book || e0.discountBp != (st.bp ?: 0) ||
+        e0.periodMonths != st.periodInt || e0.choice != st.choice)
     val shown = if (existing != null && !feeChanged) existing.fee else preview
     val dup = l.enrollments.firstOrNull { it.enrollment.id != enrollmentId && it.enrollment.className == st.cls && it.enrollment.academicYear.equals(st.year.trim(), true) }
     val valid = st.valid && dup == null

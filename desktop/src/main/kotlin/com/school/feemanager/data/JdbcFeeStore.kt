@@ -20,7 +20,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
 
 /**
- * Windows/desktop implementation of [FeeStore]: the same SQLite schema as the Android app (Room v2),
+ * Windows/desktop implementation of [FeeStore]: the same SQLite schema as the Android app (Room v3),
  * accessed through JDBC. A database file (or backup) can therefore move between phone and PC.
  *
  * All access runs on one database thread. Flows re-query when a write is committed.
@@ -44,24 +44,27 @@ class JdbcFeeStore(private val file: File) : FeeStore {
         return c
     }
 
-    /** Creates the schema in a new file, or upgrades a version-1 database (e.g. a restored phone backup). */
+    /** Creates the schema in a new file, or upgrades a version-1/2 database (e.g. a restored phone backup). */
     private fun upgrade(c: Connection) {
         val version = c.scalar("PRAGMA user_version")
         val hasTables = c.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'students'") > 0
         when {
-            !hasTables -> c.inTx { MigrationSql.CREATE_ALL_V2.forEach { sql -> c.exec(sql) } }
-            version == 1L -> c.inTx {
-                var start = java.time.LocalDate.of(java.time.LocalDate.now().year, 6, 1).toEpochDay()
-                var months = 12
-                c.prepareStatement("SELECT academicYearStart, monthsPerYear FROM school_settings WHERE id = 1").use { ps ->
-                    ps.executeQuery().use { rs -> if (rs.next()) { start = rs.getLong(1); months = rs.getInt(2) } }
-                }
-                c.exec("PRAGMA defer_foreign_keys = ON")
-                MigrationSql.statements(start, months).forEach { s -> c.exec(s.sql, *s.args) }
-                // Room's identity table, so the file stays valid for the Android app
-                MigrationSql.CREATE_ALL_V2.filter { it.contains("room_master_table") }.forEach { c.exec(it) }
-            }
+            !hasTables -> c.inTx { MigrationSql.CREATE_ALL_V3.forEach { sql -> c.exec(sql) } }
             version > MigrationSql.VERSION -> throw FeeException("This database was made by a newer version of School Fee Manager (v$version). Please update the app.")
+            version < MigrationSql.VERSION -> c.inTx {
+                c.exec("PRAGMA defer_foreign_keys = ON")
+                if (version <= 1L) {
+                    var start = java.time.LocalDate.of(java.time.LocalDate.now().year, 6, 1).toEpochDay()
+                    var months = 12
+                    c.prepareStatement("SELECT academicYearStart, monthsPerYear FROM school_settings WHERE id = 1").use { ps ->
+                        ps.executeQuery().use { rs -> if (rs.next()) { start = rs.getLong(1); months = rs.getInt(2) } }
+                    }
+                    MigrationSql.statements(start, months).forEach { s -> c.exec(s.sql, *s.args) }
+                }
+                MigrationSql.STATEMENTS_2_3.forEach { c.exec(it) }
+                // Room's identity table, so the file stays valid for the Android app
+                MigrationSql.CREATE_ALL_V3.filter { it.contains("room_master_table") }.forEach { c.exec(it) }
+            }
         }
         c.exec("PRAGMA user_version = ${MigrationSql.VERSION}")
     }
@@ -128,6 +131,7 @@ class JdbcFeeStore(private val file: File) : FeeStore {
         bookDayMyanmar = r.getLong("bookDayMyanmar"), bookDayIntl = r.getLong("bookDayIntl"), bookHostelMyanmar = r.getLong("bookHostelMyanmar"),
         bookHostelIntl = r.getLong("bookHostelIntl"), hostelFee = r.getLong("hostelFee"), startMonth = r.getInt("startMonth"),
         startDay = r.getInt("startDay"), periodMonths = r.getInt("periodMonths"),
+        commonFees = r.getBoolean("commonFees"), feeOptions = r.getString("feeOptions") ?: "",
     )
 
     private fun student(r: ResultSet) = StudentEntity(
@@ -143,6 +147,7 @@ class JdbcFeeStore(private val file: File) : FeeStore {
         updatedAt = r.getLong("updatedAt"), trainingFee = r.getLong("trainingFee"), instrumentFee = r.getLong("instrumentFee"), bookFee = r.getLong("bookFee"),
         hostelFee = r.getLong("hostelFee"), laundryFee = r.getLong("laundryFee"), entranceFee = r.getLong("entranceFee"), grossTotal = r.getLong("grossTotal"),
         discountAmount = r.getLong("discountAmount"), netTotal = r.getLong("netTotal"), assessedAt = r.getLong("assessedAt"),
+        termParts = r.getInt("termParts"), termEvery = r.getInt("termEvery"), feeChoice = r.getString("feeChoice") ?: "",
     )
 
     private fun schedule(r: ResultSet) = PaymentScheduleEntity(
@@ -187,9 +192,9 @@ class JdbcFeeStore(private val file: File) : FeeStore {
         override suspend fun deleteAll() = write("DELETE FROM fee_rates")
         override suspend fun insertAll(list: List<FeeRateEntity>) = list.forEach { r ->
             write(
-                "INSERT INTO fee_rates (${if (r.id != 0L) "id, " else ""}className, sortOrder, trainingFee, bookDayMyanmar, bookDayIntl, bookHostelMyanmar, bookHostelIntl, hostelFee, startMonth, startDay, periodMonths) VALUES (${if (r.id != 0L) "?, " else ""}?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO fee_rates (${if (r.id != 0L) "id, " else ""}className, sortOrder, trainingFee, bookDayMyanmar, bookDayIntl, bookHostelMyanmar, bookHostelIntl, hostelFee, startMonth, startDay, periodMonths, commonFees, feeOptions) VALUES (${if (r.id != 0L) "?, " else ""}?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 *(if (r.id != 0L) arrayOf<Any?>(r.id) else emptyArray()),
-                r.className, r.sortOrder, r.trainingFee, r.bookDayMyanmar, r.bookDayIntl, r.bookHostelMyanmar, r.bookHostelIntl, r.hostelFee, r.startMonth, r.startDay, r.periodMonths,
+                r.className, r.sortOrder, r.trainingFee, r.bookDayMyanmar, r.bookDayIntl, r.bookHostelMyanmar, r.bookHostelIntl, r.hostelFee, r.startMonth, r.startDay, r.periodMonths, r.commonFees, r.feeOptions,
             )
         }
     }
@@ -212,12 +217,12 @@ class JdbcFeeStore(private val file: File) : FeeStore {
         )
     }
 
-    private val enrollmentCols = "studentId, className, academicYear, startDate, periodMonths, studentType, studentStatus, bookType, paymentTerm, discountBp, remarks, active, createdOn, updatedAt, trainingFee, instrumentFee, bookFee, hostelFee, laundryFee, entranceFee, grossTotal, discountAmount, netTotal, assessedAt"
+    private val enrollmentCols = "studentId, className, academicYear, startDate, periodMonths, studentType, studentStatus, bookType, paymentTerm, discountBp, remarks, active, createdOn, updatedAt, trainingFee, instrumentFee, bookFee, hostelFee, laundryFee, entranceFee, grossTotal, discountAmount, netTotal, assessedAt, termParts, termEvery, feeChoice"
 
     private fun enrollmentArgs(e: EnrollmentEntity) = arrayOf<Any?>(
         e.studentId, e.className, e.academicYear, e.startDate, e.periodMonths, e.studentType, e.studentStatus, e.bookType, e.paymentTerm, e.discountBp,
         e.remarks, e.active, e.createdOn, e.updatedAt, e.trainingFee, e.instrumentFee, e.bookFee, e.hostelFee, e.laundryFee, e.entranceFee, e.grossTotal,
-        e.discountAmount, e.netTotal, e.assessedAt,
+        e.discountAmount, e.netTotal, e.assessedAt, e.termParts, e.termEvery, e.feeChoice,
     )
 
     private val enrollments = object : EnrollmentDao {

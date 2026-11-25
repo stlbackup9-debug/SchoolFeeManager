@@ -93,7 +93,7 @@ object Reports {
                 statusFiltered.map {
                     val s = it.s; val e = it.en
                     listOf(s.enrollNo, s.code, s.name, e.className, e.academicYear, e.startDate.format(DATE), e.periodMonths.toString(), e.type.label, e.status.label,
-                        e.bookType.label, e.term.label, it.e.status.label, if (s.active && e.active) "Yes" else "No")
+                        e.bookType.label, e.termText, it.e.status.label, if (s.active && e.active) "Yes" else "No")
                 },
                 listOf<Any?>("TOTAL", "${statusFiltered.map { it.s.id }.distinct().size} students", "${statusFiltered.size} enrollments") + List(10) { null },
             )
@@ -114,7 +114,7 @@ object Reports {
             ReportType.OUTSTANDING -> {
                 val rows = statusFiltered.filter { it.e.balance > 0 }.map {
                     val s = it.s
-                    listOf<Any?>(s.enrollNo, s.code, s.name, it.en.className, it.en.academicYear, it.en.type.label, it.en.term.label, it.e.net, it.e.paid, it.e.balance, it.e.status.label)
+                    listOf<Any?>(s.enrollNo, s.code, s.name, it.en.className, it.en.academicYear, it.en.type.label, it.en.termText, it.e.net, it.e.paid, it.e.balance, it.e.status.label)
                 }
                 ReportTable(type.title, sub, listOf("Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Type", "Term", "Net Total", "Paid", "Balance Due", "Status"), rows, totalsRow(rows, 11, setOf(7, 8, 9)))
             }
@@ -163,7 +163,7 @@ object Reports {
             ReportType.PAYMENT_SCHEDULE -> {
                 val rows = rowsAll.flatMap { r ->
                     r.e.lines.filter { f.status == null || it.status == f.status }.map { ls ->
-                        listOf<Any?>(r.s.enrollNo, r.s.code, r.s.name, r.en.className, r.en.academicYear, r.en.term.label, r.e.net, ls.line.label, ls.line.dueDate.format(DATE), ls.line.amount, ls.paid, ls.remaining, ls.status.label)
+                        listOf<Any?>(r.s.enrollNo, r.s.code, r.s.name, r.en.className, r.en.academicYear, r.en.termText, r.e.net, ls.line.label, ls.line.dueDate.format(DATE), ls.line.amount, ls.paid, ls.remaining, ls.status.label)
                     }
                 }
                 ReportTable(
@@ -177,7 +177,7 @@ object Reports {
                 val want = if (type == ReportType.UNPAID) PayStatus.UNPAID else PayStatus.PARTIAL
                 val rows = rowsAll.filter { it.e.paymentState == want }.map {
                     val nextDue = it.e.lines.firstOrNull { ls -> ls.remaining > 0 }
-                    listOf<Any?>(it.s.enrollNo, it.s.code, it.s.name, it.en.className, it.en.academicYear, it.en.type.label, it.en.term.label, it.e.net, it.e.paid, it.e.balance,
+                    listOf<Any?>(it.s.enrollNo, it.s.code, it.s.name, it.en.className, it.en.academicYear, it.en.type.label, it.en.termText, it.e.net, it.e.paid, it.e.balance,
                         nextDue?.line?.dueDate?.format(DATE) ?: "", if (it.e.overdue) "Yes" else "No")
                 }
                 ReportTable(type.title, sub, listOf("Enroll No.", "Student ID", "Student Name", "Class", "Academic Year", "Type", "Term", "Net Total", "Paid", "Balance Due", "Next Due", "Overdue"), rows, totalsRow(rows, 12, setOf(7, 8, 9)))

@@ -6,6 +6,8 @@ import com.school.feemanager.domain.DashboardSummary
 import com.school.feemanager.domain.FeeAssessment
 import com.school.feemanager.domain.FeeCalculator
 import com.school.feemanager.domain.FeeRateCard
+import com.school.feemanager.domain.FeeChoice
+import com.school.feemanager.domain.PaymentPlan
 import com.school.feemanager.domain.Ledger
 import com.school.feemanager.domain.LedgerInput
 import com.school.feemanager.domain.PasswordHasher
@@ -77,7 +79,17 @@ data class EnrollmentForm(
     val discountBp: Int,
     val term: PaymentTerm,
     val remarks: String,
-)
+    /** CUSTOM term: number of installments and months between them (0 = spread evenly over the period) */
+    val termParts: Int = 0,
+    val termEvery: Int = 0,
+    /** training option / book options chosen for this student */
+    val choice: FeeChoice = FeeChoice.DEFAULT,
+) {
+    val plan: PaymentPlan get() = PaymentPlan(term, termParts, termEvery)
+    /** only CUSTOM keeps installment details */
+    val termPartsStored: Int get() = if (term == PaymentTerm.CUSTOM) termParts else 0
+    val termEveryStored: Int get() = if (term == PaymentTerm.CUSTOM) termEvery else 0
+}
 
 /** One line of a payment: money for one enrollment, optionally one schedule line. */
 data class PayItem(
@@ -237,7 +249,7 @@ class FeeRepository(private val db: FeeStore) {
 
     // --------------------------------------------------------------- students
     fun preview(card: FeeRateCard, form: EnrollmentForm): FeeAssessment =
-        FeeCalculator.assess(card, form.className, form.type, form.status, form.bookType, form.discountBp, form.periodMonths)
+        FeeCalculator.assess(card, form.className, form.type, form.status, form.bookType, form.discountBp, form.periodMonths, form.choice)
 
     private suspend fun nextStudentCode(): String {
         var s = settingsDao.get()!!
@@ -267,6 +279,12 @@ class FeeRepository(private val db: FeeStore) {
         if (form.periodMonths !in 1..24) throw FeeException("Period must be 1–24 months")
         if (form.academicYear.isBlank()) throw FeeException("Academic year is required")
         if (form.academicYear.trim().length > 20) throw FeeException("Academic year is too long")
+        if (form.term == PaymentTerm.CUSTOM) {
+            if (form.termParts !in 1..PaymentPlan.MAX_PARTS) throw FeeException("Custom payment term: number of installments must be 1–${PaymentPlan.MAX_PARTS}")
+            if (form.termEvery !in 0..24) throw FeeException("Custom payment term: months between installments must be 0–24")
+        }
+        FeeCalculator.unknownChoices(card, form.className, form.choice).firstOrNull()
+            ?.let { throw FeeException("${form.className} has no $it – choose again in the class fees") }
     }
 
     /** Same student name already enrolled in this class and year (another student record)? */
@@ -317,7 +335,7 @@ class FeeRepository(private val db: FeeStore) {
     private suspend fun writeSchedule(e: EnrollmentEntity) {
         scheduleDao.deleteForEnrollment(e.id)
         scheduleDao.insertAll(
-            ScheduleCalculator.generate(PaymentTerm.valueOf(e.paymentTerm), e.netTotal, LocalDate.ofEpochDay(e.startDate), e.periodMonths).map { it.toEntity(e.id) },
+            ScheduleCalculator.generate(PaymentTerm.valueOf(e.paymentTerm), e.netTotal, LocalDate.ofEpochDay(e.startDate), e.periodMonths, e.termParts, e.termEvery).map { it.toEntity(e.id) },
         )
     }
 
@@ -333,6 +351,7 @@ class FeeRepository(private val db: FeeStore) {
             studentType = form.type.name, studentStatus = form.status.name, bookType = form.bookType.name, paymentTerm = form.term.name,
             discountBp = form.discountBp, remarks = form.remarks.trim(), createdOn = LocalDate.now().toEpochDay(), updatedAt = now,
             trainingFee = 0, instrumentFee = 0, bookFee = 0, hostelFee = 0, laundryFee = 0, entranceFee = 0, grossTotal = 0, discountAmount = 0, netTotal = 0, assessedAt = now,
+            termParts = form.termPartsStored, termEvery = form.termEveryStored, feeChoice = form.choice.encode(),
         ).withFee(fee, now)
         val id = enrollmentDao.insert(base)
         writeSchedule(base.copy(id = id))
@@ -355,16 +374,18 @@ class FeeRepository(private val db: FeeStore) {
             className = form.className, academicYear = year, startDate = form.startDate.toEpochDay(), periodMonths = form.periodMonths,
             studentType = form.type.name, studentStatus = form.status.name, bookType = form.bookType.name, paymentTerm = form.term.name,
             discountBp = form.discountBp, remarks = form.remarks.trim(), updatedAt = now,
+            termParts = form.termPartsStored, termEvery = form.termEveryStored, feeChoice = form.choice.encode(),
         )
         val feeChanged = old.className != updated.className || old.studentType != updated.studentType || old.studentStatus != updated.studentStatus ||
-            old.bookType != updated.bookType || old.discountBp != updated.discountBp || old.periodMonths != updated.periodMonths
+            old.bookType != updated.bookType || old.discountBp != updated.discountBp || old.periodMonths != updated.periodMonths || old.feeChoice != updated.feeChoice
         if (feeChanged) {
             val fee = preview(card, form)
             updated = updated.withFee(fee, now)
             audit(by, "ENROLL_REASSESS", "enrollment $id: net ${old.netTotal} -> ${fee.netTotal}")
         }
         enrollmentDao.update(updated)
-        if (feeChanged || old.paymentTerm != updated.paymentTerm || old.startDate != updated.startDate || old.periodMonths != updated.periodMonths) writeSchedule(updated)
+        if (feeChanged || old.paymentTerm != updated.paymentTerm || old.startDate != updated.startDate || old.periodMonths != updated.periodMonths ||
+            old.termParts != updated.termParts || old.termEvery != updated.termEvery) writeSchedule(updated)
         audit(by, "ENROLL_EDIT", "enrollment $id: ${updated.className} ${updated.academicYear}")
         id
     }
@@ -465,6 +486,10 @@ class FeeRepository(private val db: FeeStore) {
             if (c.startMonth !in 1..12) throw FeeException("${c.className}: start month must be 1–12")
             if (c.startDay !in 1..31) throw FeeException("${c.className}: start day must be 1–31")
             if (c.periodMonths !in 1..24) throw FeeException("${c.className}: period must be 1–24 months")
+            if (c.options.any { it.amount < 0 }) throw FeeException("${c.className}: option amounts cannot be negative")
+            if (c.options.any { it.name.isBlank() }) throw FeeException("${c.className}: every training / book option needs a name")
+            c.options.groupBy { it.kind to it.name.lowercase(Locale.ROOT) }.values.firstOrNull { it.size > 1 }
+                ?.let { throw FeeException("${c.className}: ${it[0].kind.label.lowercase()} option '${it[0].name}' appears twice") }
         }
     }
 
@@ -501,6 +526,7 @@ class FeeRepository(private val db: FeeStore) {
         return EnrollmentForm(
             className = rate.className, academicYear = e.academicYear ?: academicYearLabel(start, period), startDate = start, periodMonths = period,
             type = e.type, status = e.status, bookType = e.bookType, discountBp = e.discountBp, term = e.term, remarks = e.remarks,
+            termParts = e.termParts, termEvery = e.termEvery, choice = e.choice,
         )
     }
 
@@ -654,7 +680,7 @@ class FeeRepository(private val db: FeeStore) {
                 txDao.insert(
                     PaymentTransactionEntity(
                         receiptId = rid, studentId = sid, enrollmentId = e.id, date = p.date.toEpochDay(), amount = p.amount,
-                        scheduleSeq = ScheduleCalculator.parsePaymentFor(p.paymentFor, PaymentTerm.valueOf(e.paymentTerm), e.periodMonths),
+                        scheduleSeq = ScheduleCalculator.parsePaymentFor(p.paymentFor, PaymentTerm.valueOf(e.paymentTerm), e.periodMonths, e.termParts),
                         paymentFor = p.paymentFor, remarks = p.remarks, receivedBy = p.receivedBy, createdAt = now, imported = true,
                     ),
                 )

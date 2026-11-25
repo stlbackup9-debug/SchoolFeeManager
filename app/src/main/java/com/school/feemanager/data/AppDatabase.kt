@@ -11,7 +11,7 @@ import androidx.room.RoomDatabase
         PaymentScheduleEntity::class, ReceiptEntity::class, PaymentTransactionEntity::class,
         UserEntity::class, AuditLogEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,7 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)
                 // TRUNCATE journal keeps the whole database in ONE file, so backup/restore is a plain file copy.
                 .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
-                .addMigrations(Migrations.MIGRATION_1_2)
+                .addMigrations(Migrations.MIGRATION_1_2, Migrations.MIGRATION_2_3)
                 .build()
     }
 }

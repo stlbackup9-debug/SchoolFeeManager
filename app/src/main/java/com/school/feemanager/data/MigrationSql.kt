@@ -148,5 +148,44 @@ object MigrationSql {
         "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'da114bc870d258254a605b0a8f12084a')",
     )
 
-    const val VERSION = 2
+    /** Version 2 → 3: only new columns with defaults; existing rows keep every value (all classes take the common fees, standard choices). */
+    val STATEMENTS_2_3 = listOf(
+        "ALTER TABLE `fee_rates` ADD COLUMN `commonFees` INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE `fee_rates` ADD COLUMN `feeOptions` TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE `enrollments` ADD COLUMN `termParts` INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE `enrollments` ADD COLUMN `termEvery` INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE `enrollments` ADD COLUMN `feeChoice` TEXT NOT NULL DEFAULT ''",
+    )
+
+    /** The complete version-3 schema exactly as Room creates it (from schemas/…/3.json), incl. Room's identity hash. */
+    val CREATE_ALL_V3 = listOf(
+        "CREATE TABLE IF NOT EXISTS `fee_rates` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `className` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `trainingFee` INTEGER NOT NULL, `bookDayMyanmar` INTEGER NOT NULL, `bookDayIntl` INTEGER NOT NULL, `bookHostelMyanmar` INTEGER NOT NULL, `bookHostelIntl` INTEGER NOT NULL, `hostelFee` INTEGER NOT NULL, `startMonth` INTEGER NOT NULL, `startDay` INTEGER NOT NULL, `periodMonths` INTEGER NOT NULL, `commonFees` INTEGER NOT NULL DEFAULT 1, `feeOptions` TEXT NOT NULL DEFAULT '')",
+        "CREATE UNIQUE INDEX IF NOT EXISTS `index_fee_rates_className` ON `fee_rates` (`className`)",
+        "CREATE TABLE IF NOT EXISTS `school_settings` (`id` INTEGER NOT NULL, `schoolName` TEXT NOT NULL, `address` TEXT NOT NULL, `phone` TEXT NOT NULL, `instrumentFee` INTEGER NOT NULL, `laundryPerMonth` INTEGER NOT NULL, `monthsPerYear` INTEGER NOT NULL, `entranceFee` INTEGER NOT NULL, `academicYearStart` INTEGER NOT NULL, `receiptPrefix` TEXT NOT NULL, `nextReceiptSeq` INTEGER NOT NULL, `nextStudentSeq` INTEGER NOT NULL, `ratesUpdatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "CREATE TABLE IF NOT EXISTS `students` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `code` TEXT NOT NULL, `enrollNo` TEXT, `name` TEXT NOT NULL, `nameKey` TEXT NOT NULL, `remarks` TEXT NOT NULL, `active` INTEGER NOT NULL, `registeredOn` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS `index_students_code` ON `students` (`code`)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS `index_students_enrollNo` ON `students` (`enrollNo`)",
+        "CREATE INDEX IF NOT EXISTS `index_students_nameKey` ON `students` (`nameKey`)",
+        "CREATE TABLE IF NOT EXISTS `enrollments` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `studentId` INTEGER NOT NULL, `className` TEXT NOT NULL, `academicYear` TEXT NOT NULL, `startDate` INTEGER NOT NULL, `periodMonths` INTEGER NOT NULL, `studentType` TEXT NOT NULL, `studentStatus` TEXT NOT NULL, `bookType` TEXT NOT NULL, `paymentTerm` TEXT NOT NULL, `discountBp` INTEGER NOT NULL, `remarks` TEXT NOT NULL, `active` INTEGER NOT NULL, `createdOn` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `trainingFee` INTEGER NOT NULL, `instrumentFee` INTEGER NOT NULL, `bookFee` INTEGER NOT NULL, `hostelFee` INTEGER NOT NULL, `laundryFee` INTEGER NOT NULL, `entranceFee` INTEGER NOT NULL, `grossTotal` INTEGER NOT NULL, `discountAmount` INTEGER NOT NULL, `netTotal` INTEGER NOT NULL, `assessedAt` INTEGER NOT NULL, `termParts` INTEGER NOT NULL DEFAULT 0, `termEvery` INTEGER NOT NULL DEFAULT 0, `feeChoice` TEXT NOT NULL DEFAULT '', FOREIGN KEY(`studentId`) REFERENCES `students`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "CREATE UNIQUE INDEX IF NOT EXISTS `index_enrollments_studentId_className_academicYear` ON `enrollments` (`studentId`, `className`, `academicYear`)",
+        "CREATE INDEX IF NOT EXISTS `index_enrollments_className` ON `enrollments` (`className`)",
+        "CREATE TABLE IF NOT EXISTS `payment_schedule` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `enrollmentId` INTEGER NOT NULL, `seq` INTEGER NOT NULL, `label` TEXT NOT NULL, `dueDate` INTEGER NOT NULL, `amount` INTEGER NOT NULL, FOREIGN KEY(`enrollmentId`) REFERENCES `enrollments`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "CREATE UNIQUE INDEX IF NOT EXISTS `index_payment_schedule_enrollmentId_seq` ON `payment_schedule` (`enrollmentId`, `seq`)",
+        "CREATE TABLE IF NOT EXISTS `receipts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `receiptNo` TEXT NOT NULL, `date` INTEGER NOT NULL, `payerName` TEXT NOT NULL, `issuedAt` INTEGER NOT NULL, `previousBalance` INTEGER NOT NULL, `remainingBalance` INTEGER NOT NULL, `receivedBy` TEXT NOT NULL, `remarks` TEXT NOT NULL, `printCount` INTEGER NOT NULL, `voided` INTEGER NOT NULL, `voidReason` TEXT NOT NULL, `voidedBy` TEXT NOT NULL, `imported` INTEGER NOT NULL)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS `index_receipts_receiptNo` ON `receipts` (`receiptNo`)",
+        "CREATE INDEX IF NOT EXISTS `index_receipts_date` ON `receipts` (`date`)",
+        "CREATE TABLE IF NOT EXISTS `payment_transactions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `receiptId` INTEGER NOT NULL, `studentId` INTEGER NOT NULL, `enrollmentId` INTEGER NOT NULL, `date` INTEGER NOT NULL, `amount` INTEGER NOT NULL, `scheduleSeq` INTEGER, `paymentFor` TEXT NOT NULL, `remarks` TEXT NOT NULL, `receivedBy` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `voided` INTEGER NOT NULL, `voidReason` TEXT NOT NULL, `voidedBy` TEXT NOT NULL, `imported` INTEGER NOT NULL, FOREIGN KEY(`receiptId`) REFERENCES `receipts`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT , FOREIGN KEY(`studentId`) REFERENCES `students`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT , FOREIGN KEY(`enrollmentId`) REFERENCES `enrollments`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "CREATE INDEX IF NOT EXISTS `index_payment_transactions_receiptId` ON `payment_transactions` (`receiptId`)",
+        "CREATE INDEX IF NOT EXISTS `index_payment_transactions_studentId` ON `payment_transactions` (`studentId`)",
+        "CREATE INDEX IF NOT EXISTS `index_payment_transactions_enrollmentId` ON `payment_transactions` (`enrollmentId`)",
+        "CREATE INDEX IF NOT EXISTS `index_payment_transactions_date` ON `payment_transactions` (`date`)",
+        "CREATE TABLE IF NOT EXISTS `users` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `username` TEXT NOT NULL, `fullName` TEXT NOT NULL, `role` TEXT NOT NULL, `passwordHash` TEXT NOT NULL, `salt` TEXT NOT NULL, `active` INTEGER NOT NULL, `mustChangePassword` INTEGER NOT NULL)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS `index_users_username` ON `users` (`username`)",
+        "CREATE TABLE IF NOT EXISTS `audit_log` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, `username` TEXT NOT NULL, `action` TEXT NOT NULL, `details` TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS `index_audit_log_at` ON `audit_log` (`at`)",
+        "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+        "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ec945f97fadd3c26c417336520068702')",
+    )
+
+    const val VERSION = 3
 }

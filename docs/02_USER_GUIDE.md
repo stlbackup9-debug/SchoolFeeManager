@@ -23,7 +23,7 @@
 **Students** – search by name, **Enroll No.** or Student ID; filter by class, Day/Hostel, payment status, inactive. Each row shows the student's classes and the balance over all classes. Tap a student for the profile.
 * **Register** (Admin): **Enroll No.** (typed by you, optional, must be unique), name, remarks, and optionally the first class. The Student ID (STU-0001) is still generated automatically.
 * **Student page**: profile, balance of all classes, one card per **class enrollment** (class, academic year, start date, period, type, term, fee breakdown, schedule with **Pay** buttons) and the payment history.
-* **Add class** (Admin): a student can attend several classes at the same time, or a new class next year. Each enrollment has its **own academic year, start date and period (months)** – defaults come from the class in Fee Rates, and can be changed. Its fees and schedule are separate: 3-Inst is due at the start, +⅓ and +⅔ of the period; Monthly has one payment per month of the period. Laundry (hostel) is charged per month of the period.
+* **Add class** (Admin): a student can attend several classes at the same time, or a new class next year. Each enrollment has its **own academic year, start date and period (months)** – defaults come from the class in Fee Rates, and can be changed. Its fees and schedule are separate. Payment terms: **3-Inst** (due at the start, +⅓ and +⅔ of the period), **Monthly** (one payment per month of the period), **Full payment** (everything at once, due on the start date), **Custom installments** (you choose how many installments, 1–24, and optionally every how many months; 0 = spread evenly over the period). Laundry (hostel) is charged per month of the period.
 * **Class ⋮ menu**: Edit (changing class, type, New/Old, book, discount or period re-assesses with current rates – old vs new Net is shown), Recalculate with current rates, Deactivate (student left that class; payments kept).
 * The same name cannot be registered twice in the same class and academic year.
 
@@ -41,6 +41,12 @@
 
 ## Changing fee rates
 Saving new rates affects **new class enrollments only**. Existing enrollments keep their approved assessment; the class card shows what the current rates would give. To apply new rates use *Recalculate* on one class or **Settings → Recalculate existing classes** (all active enrollments) – a confirmation shows how many change and the total effect.
+
+## Fees for all students and student choices (version 1.3)
+In **Settings → Fee rates → Fees by class**:
+* **Fees for all students** (tick per class): when ticked, the instrument fee and the entrance fee (new students) are charged in that class. Untick it for classes that do not pay these fixed fees.
+* **Student choices**: extra **training** fees (e.g. *Advanced 300,000*, *Private 450,000*) and extra **book** fees (e.g. *Workbook 15,000*) for that class.
+When a student is enrolled in the class, the form shows **Training fee** (Standard / one of the choices / No training fee) and **Book fees** (the standard book by Day/Hostel and book type, plus any extra books ticked). The fee calculation updates at once; the student's class card shows the choices. Changing a choice later re-assesses that class. Each class's period (Months) is the default – it can be changed for each student.
 
 ## Import from Excel or CSV (Settings → Data)
 Each module has **Import…**, and a template as **.xlsx** or **.csv**. Fill the template in Excel or Google Sheets (keep the header row; extra columns are ignored, columns can be in any order, common alternative names like "Name" or "Enroll Number" are understood). Suggested order:
@@ -68,4 +74,4 @@ Installing 1.1 over 1.0 keeps all data. Every student becomes a student with one
 The app chooses its layout from the screen: phones get the bottom bar and cards; tablets get the school sidebar with wide tables (compact sidebar in portrait). On a phone open *Settings → Display*, on a tablet tap *Scale & Layout* in the sidebar to change the size of text and items, force the *Phone* or *Tablet* layout, pick one of 7 colours, and choose *Day*, *Night* or *Automatic* (follows the phone's dark theme). The moon/sun button in the sidebar switches night mode quickly.
 
 ## Windows version
-Install with `SchoolFeeManager-1.2.0-Setup.exe` (or use the portable zip). It works exactly like the phone app; the bottom bar, screens and reports are the same. Differences: files are chosen with the normal Windows Open / Save dialogs; *Print* opens the receipt or report in your web browser with its print dialog (pick a printer or *Microsoft Print to PDF*). To move data between phone and PC, make a backup on one and *Restore* it on the other. Data lives in `%APPDATA%\SchoolFeeManager`.
+Install with `SchoolFeeManager-1.3.0-Setup.exe` (or use the portable zip). It works exactly like the phone app; the bottom bar, screens and reports are the same. Differences: files are chosen with the normal Windows Open / Save dialogs; *Print* opens the receipt or report in your web browser with its print dialog (pick a printer or *Microsoft Print to PDF*). To move data between phone and PC, make a backup on one and *Restore* it on the other. Data lives in `%APPDATA%\SchoolFeeManager`.

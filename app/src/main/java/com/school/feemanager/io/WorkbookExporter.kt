@@ -83,8 +83,8 @@ object WorkbookExporter {
         w.set(1, 1, "STUDENT REGISTER & FEE CALCULATION", STYLE_TITLE)
         val headers = listOf("No.", "Student Name", "Class", "Student Type\n(Day/Hostel)", "New/Old\nStudent", "Book Type\n(Myanmar/\nIntl)",
             "Training Fee", "Instrument Fee", "Book Fee", "Hostel Fee", "Laundry Fee\n(Annual)", "Entrance Fee", "Gross Total", "Discount %",
-            "Discount Amt", "NET TOTAL\nRECEIVABLE", "Payment Term\n(3-inst/Monthly)", "Paid Amount\n(Cumulative)", "Balance Due", "Remarks", "Student ID", "Active",
-            "Enroll No.", "Academic Year", "Start Date", "Period (Months)")
+            "Discount Amt", "NET TOTAL\nRECEIVABLE", "Payment Term\n(3-inst/Monthly/\nFull/n-Inst)", "Paid Amount\n(Cumulative)", "Balance Due", "Remarks", "Student ID", "Active",
+            "Enroll No.", "Academic Year", "Start Date", "Period (Months)", "Training Option", "Book Options")
         headers.forEachIndexed { i, h -> w.set(2, i + 1, h, STYLE_HEADER) }
         list.forEachIndexed { i, row ->
             val r = i + 3; val s = row.s; val l = row.e; val e = l.enrollment; val f = l.fee
@@ -93,10 +93,11 @@ object WorkbookExporter {
             if (e.type == StudentType.HOSTEL) { w.set(r, 10, f.hostelFee); w.set(r, 11, f.laundryFee) }
             if (f.entranceFee > 0) w.set(r, 12, f.entranceFee)
             w.set(r, 13, f.grossTotal); w.set(r, 14, f.discountBp / 10000.0, STYLE_PERCENT); w.set(r, 15, f.discountAmount)
-            w.set(r, 16, f.netTotal, STYLE_BOLD_NUMBER); w.set(r, 17, e.term.label); w.set(r, 18, l.paid); w.set(r, 19, l.balance)
+            w.set(r, 16, f.netTotal, STYLE_BOLD_NUMBER); w.set(r, 17, e.termText); w.set(r, 18, l.paid); w.set(r, 19, l.balance)
             w.set(r, 20, listOf(s.remarks, e.remarks).filter { it.isNotBlank() }.joinToString(" / ").ifEmpty { null }); w.set(r, 21, s.code)
             w.set(r, 22, if (s.active && e.active) "Yes" else "No")
             w.set(r, 23, s.enrollNo.ifEmpty { null }); w.set(r, 24, e.academicYear); w.set(r, 25, e.startDate.format(D)); w.set(r, 26, e.periodMonths.toLong())
+            w.set(r, 27, e.choice.trainingText); w.set(r, 28, e.choice.booksText)
         }
         val tr = list.size + 3
         w.set(tr, 1, "TOTALS", STYLE_BOLD)
@@ -104,7 +105,7 @@ object WorkbookExporter {
             11 to { x -> x.e.fee.laundryFee }, 12 to { x -> x.e.fee.entranceFee }, 13 to { x -> x.e.fee.grossTotal }, 15 to { x -> x.e.fee.discountAmount },
             16 to { x -> x.e.net }, 18 to { x -> x.e.paid }, 19 to { x -> x.e.balance })
             .forEach { (c, fn) -> w.set(tr, c, list.sumOf(fn), STYLE_BOLD_NUMBER) }
-        w.width(1, 6.0); w.width(2, 26.0); (3..19).forEach { w.width(it, 14.0) }; w.width(20, 24.0); (21..26).forEach { w.width(it, 13.0) }
+        w.width(1, 6.0); w.width(2, 26.0); (3..19).forEach { w.width(it, 14.0) }; w.width(20, 24.0); (21..26).forEach { w.width(it, 13.0) }; w.width(27, 16.0); w.width(28, 22.0)
     }
 
     private fun schedule(w: XlsxWriter, list: List<Row>) {
@@ -113,22 +114,22 @@ object WorkbookExporter {
         val headers = listOf("No.", "Student Name", "Class", "Payment Term", "Net Total", "Inst-1", "Inst-2", "Inst-3") + (1..12).map { "M-$it" } +
             listOf("Total Paid", "Remaining", "Status", "Student ID", "Enroll No.", "Academic Year") + (13..24).map { "M-$it" }
         headers.forEachIndexed { i, h -> w.set(2, i + 1, h, STYLE_HEADER) }
-        fun col(term: PaymentTerm, seq: Int) = if (term == PaymentTerm.THREE_INST) 5 + seq else if (seq <= 12) 8 + seq else 26 + (seq - 12)
+        // installment terms with up to 3 parts (3-Inst, Full, 2-Inst) use the Inst columns, the others the M columns
+        fun instCols(e: com.school.feemanager.domain.EnrollmentRecord) = e.term.isInstallments && e.plan.partsFor(e.periodMonths) <= 3 || e.term == PaymentTerm.FULL
+        fun col(e: com.school.feemanager.domain.EnrollmentRecord, seq: Int) = if (instCols(e)) 5 + seq else if (seq <= 12) 8 + seq else 26 + (seq - 12)
         list.forEachIndexed { i, row ->
             val r = i + 3; val l = row.e; val e = l.enrollment
-            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, row.s.name); w.set(r, 3, e.className); w.set(r, 4, e.term.label); w.set(r, 5, l.net)
-            l.lines.forEach { ls -> w.set(r, col(e.term, ls.line.seq), ls.line.amount) }
+            w.set(r, 1, (i + 1).toLong()); w.set(r, 2, row.s.name); w.set(r, 3, e.className); w.set(r, 4, e.termText); w.set(r, 5, l.net)
+            l.lines.forEach { ls -> w.set(r, col(e, ls.line.seq), ls.line.amount) }
             w.set(r, 21, l.paid); w.set(r, 22, l.balance); w.set(r, 23, l.status.label); w.set(r, 24, row.s.code)
             w.set(r, 25, row.s.enrollNo.ifEmpty { null }); w.set(r, 26, e.academicYear)
         }
         val tr = list.size + 3
         w.set(tr, 1, "TOTALS", STYLE_BOLD)
         w.set(tr, 5, list.sumOf { it.e.net }, STYLE_BOLD_NUMBER)
-        (1..3).forEach { seq -> w.set(tr, 5 + seq, list.filter { it.e.enrollment.term == PaymentTerm.THREE_INST }.sumOf { x -> x.e.lines.firstOrNull { it.line.seq == seq }?.line?.amount ?: 0L }, STYLE_BOLD_NUMBER) }
-        (1..24).forEach { seq ->
-            val sum = list.filter { it.e.enrollment.term == PaymentTerm.MONTHLY }.sumOf { x -> x.e.lines.firstOrNull { it.line.seq == seq }?.line?.amount ?: 0L }
-            if (seq <= 12 || sum > 0) w.set(tr, col(PaymentTerm.MONTHLY, seq), sum, STYLE_BOLD_NUMBER)
-        }
+        val sums = HashMap<Int, Long>()
+        list.forEach { x -> x.e.lines.forEach { ls -> val c = col(x.e.enrollment, ls.line.seq); sums[c] = (sums[c] ?: 0L) + ls.line.amount } }
+        ((6..20) + sums.keys.filter { it > 26 }).forEach { c -> w.set(tr, c, sums[c] ?: 0L, STYLE_BOLD_NUMBER) }
         w.set(tr, 21, list.sumOf { it.e.paid }, STYLE_BOLD_NUMBER); w.set(tr, 22, list.sumOf { it.e.balance }, STYLE_BOLD_NUMBER)
         w.width(2, 26.0); (3..38).forEach { w.width(it, 12.0) }
     }
@@ -184,7 +185,16 @@ object WorkbookExporter {
         classes.forEachIndexed { i, c ->
             w.set(6 + i, 17, c.className); w.set(6 + i, 18, c.startMonth.toLong()); w.set(6 + i, 19, c.startDay.toLong()); w.set(6 + i, 20, c.periodMonths.toLong())
         }
+        // F) classes without the "fees for all students", and the training / book options students can choose (added by the app)
+        w.set(4, 22, "F)  FEES FOR ALL STUDENTS & FEE OPTIONS PER CLASS", STYLE_BOLD)
+        listOf(22 to "Class", 23 to "Fees for All Students", 24 to "Training Options", 25 to "Book Options").forEach { (c, h) -> w.set(5, c, h, STYLE_HEADER) }
+        classes.forEachIndexed { i, c ->
+            w.set(6 + i, 22, c.className); w.set(6 + i, 23, if (c.commonFees) "Yes" else "No")
+            w.set(6 + i, 24, com.school.feemanager.domain.FeeOption.listText(c.trainingOptions).ifEmpty { null })
+            w.set(6 + i, 25, com.school.feemanager.domain.FeeOption.listText(c.bookOptions).ifEmpty { null })
+        }
         w.width(1, 30.0); w.width(2, 18.0); w.width(6, 24.0); w.width(7, 16.0); (11..15).forEach { w.width(it, 18.0) }; (17..20).forEach { w.width(it, 14.0) }
+        w.width(22, 12.0); w.width(23, 14.0); w.width(24, 34.0); w.width(25, 34.0)
     }
 
     /** Any report table as a one-sheet workbook. */

@@ -1,4 +1,4 @@
-# Test Results – 23 Nov 2026 (version 1.2)
+# Test Results – 25 Nov 2026 (version 1.3)
 
 ## What was tested, and how
 
@@ -14,6 +14,7 @@
 | Windows screens | `DesktopUiTest` drives the real UI headless: login → dashboard → students → student page → Payables multi-select → Collect → confirm → combined receipt → print → collection → report → Data; screenshots saved | **1 / 1 pass** |
 | Scale & Layout, colours, Night mode | `DisplaySettingsUiTest`: dialog changes scale / colour / night mode at once, compact sidebar, saved and read back | **1 / 1 pass** |
 | Android phone / tablet layouts (1.2) | `AdaptiveLayoutTest` renders the shared Android screens headless at phone (412×892), tablet portrait (800×1280), tablet landscape (1280×800) and phone landscape (892×412) sizes: bottom navigation on the phone, sidebar + tables on tablets (compact in portrait), Settings → Display dialog on the phone, Night mode + colour, forcing Phone / Tablet layout, login on short screens; screenshots saved | **4 / 4 pass** |
+| Fee choices and payment terms (1.3) | `FeeOptionsTest` (5): "Fees for all students" off per class, training / book choices, Full and custom terms (amounts, due dates, labels, parsing), Excel/CSV import of terms, choices and class options, database v2 → v3 migration matches Room's schema incl. defaults; `RepositoryTest` (+2): save / pay / re-assess / workbook export → import / reopen with choices and terms on real SQLite, a version-2 database upgraded in place; `FeeChoicesUiTest` (2): Fee Rates table with the new columns and the choices dialog, registering a student with training + book choices and a 6-installment term | **9 / 9 pass** |
 | Windows package | `packageWindows` builds the NSIS installer, launcher and portable zip; the packaged jars were started with `main()` on JDK 21 (virtual display): database created, login screen shown | Built; **not run on Windows** |
 | Android UI on a real device, printing | **Not run** – no Android emulator/device is available in the build environment (no hardware virtualisation). The screens themselves are the same code tested above at phone/tablet sizes; status-bar insets, the on-screen keyboard and printing need a real device. | Pending – try on a phone |
 
@@ -54,12 +55,14 @@
 ## Unit test log
 ```
 BusinessRulesTest  15 tests  0 failures
+FeeOptionsTest      5 tests  0 failures
 MigrationTest       1 test   0 failures
 MultiClassTest      6 tests  0 failures
 WorkbookTest        3 tests  0 failures
-RepositoryTest      5 tests  0 failures   (desktop)
+RepositoryTest      7 tests  0 failures   (desktop)
 DesktopUiTest       1 test   0 failures   (desktop)
 DisplaySettingsUiTest 1 test 0 failures   (desktop)
 AdaptiveLayoutTest  4 tests  0 failures   (desktop)
-RESULT: 36 passed, 0 failed
+FeeChoicesUiTest    2 tests  0 failures   (desktop)
+RESULT: 45 passed, 0 failed
 ```

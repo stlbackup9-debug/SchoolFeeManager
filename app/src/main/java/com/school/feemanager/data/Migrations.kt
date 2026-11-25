@@ -28,4 +28,11 @@ object Migrations {
             MigrationSql.statements(startDay, months).forEach { s -> if (s.args.isEmpty()) db.execSQL(s.sql) else db.execSQL(s.sql, s.args) }
         }
     }
+
+    /** Version 2 → 3 (app 1.3): per-class "Fees for all students" flag and fee options; custom payment terms and fee choices per enrollment. */
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            MigrationSql.STATEMENTS_2_3.forEach { db.execSQL(it) }
+        }
+    }
 }

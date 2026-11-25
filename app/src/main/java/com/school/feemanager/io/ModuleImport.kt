@@ -5,6 +5,10 @@ import com.school.feemanager.domain.ClassRate
 import com.school.feemanager.domain.FeeRateCard
 import com.school.feemanager.domain.Money
 import com.school.feemanager.domain.PaymentTerm
+import com.school.feemanager.domain.PaymentPlan
+import com.school.feemanager.domain.FeeChoice
+import com.school.feemanager.domain.FeeKind
+import com.school.feemanager.domain.FeeOption
 import com.school.feemanager.domain.StudentStatus
 import com.school.feemanager.domain.StudentType
 import com.school.feemanager.io.XlsxWriter.Companion.STYLE_HEADER
@@ -17,6 +21,9 @@ import java.util.Locale
 object Fields {
     /** "Enroll No." → "enrollno" – used to match column headers loosely. */
     fun norm(s: String): String = s.lowercase(Locale.US).filter { it.isLetterOrDigit() }
+
+    fun yes(s: String): Boolean = s.trim().lowercase(Locale.US) in setOf("yes", "y", "true", "1", "x", "✓")
+    fun no(s: String): Boolean = s.trim().lowercase(Locale.US) in setOf("no", "n", "false", "0", "-")
 
     private val DATE_FORMATS = listOf("d/M/yyyy", "d-M-yyyy", "yyyy-M-d", "yyyy/M/d", "d-MMM-yyyy", "d MMM yyyy", "d-MMM-yy", "M/d/yyyy", "d.M.yyyy")
         .map { DateTimeFormatter.ofPattern(it, Locale.US) }
@@ -164,7 +171,9 @@ enum class ImportModule(val label: String, val description: String, val sheetNam
             ImportColumn("Student Type", false, "Day or Hostel (blank = Day)", "Day", listOf("Type", "Day/Hostel")),
             ImportColumn("New/Old", false, "New or Old (blank = Old)", "New", listOf("New/Old Student", "Status")),
             ImportColumn("Book Type", false, "Myanmar or International (blank = International)", "Myanmar", listOf("Book")),
-            ImportColumn("Payment Term", false, "3-Inst or Monthly (blank = 3-Inst)", "3-Inst", listOf("Term")),
+            ImportColumn("Payment Term", false, "3-Inst, Monthly, Full payment, or custom e.g. 4-Inst / 4-Inst every 2 months (blank = 3-Inst)", "3-Inst", listOf("Term")),
+            ImportColumn("Training Option", false, "Blank = the class's standard training fee; None; or a training option name of the class", "", listOf("Training")),
+            ImportColumn("Book Options", false, "Blank = standard book; or e.g. Standard + Workbook, Workbook, None", "", listOf("Books")),
             ImportColumn("Discount %", false, "0 – 100", "0", listOf("Discount")),
             ImportColumn("Remarks", false, "", ""),
         ),
@@ -184,7 +193,9 @@ enum class ImportModule(val label: String, val description: String, val sheetNam
             ImportColumn("Student Type", false, "Day or Hostel (blank = Day)", "Day", listOf("Type", "Day/Hostel")),
             ImportColumn("New/Old", false, "New or Old (blank = Old)", "Old", listOf("New/Old Student", "Status")),
             ImportColumn("Book Type", false, "Myanmar or International (blank = International)", "Myanmar", listOf("Book")),
-            ImportColumn("Payment Term", false, "3-Inst or Monthly (blank = 3-Inst)", "Monthly", listOf("Term")),
+            ImportColumn("Payment Term", false, "3-Inst, Monthly, Full payment, or custom e.g. 4-Inst / 4-Inst every 2 months (blank = 3-Inst)", "Monthly", listOf("Term")),
+            ImportColumn("Training Option", false, "Blank = the class's standard training fee; None; or a training option name of the class", "", listOf("Training")),
+            ImportColumn("Book Options", false, "Blank = standard book; or e.g. Standard + Workbook, Workbook, None", "", listOf("Books")),
             ImportColumn("Discount %", false, "0 – 100", "10", listOf("Discount")),
             ImportColumn("Remarks", false, "", ""),
         ),
@@ -222,6 +233,9 @@ enum class ImportModule(val label: String, val description: String, val sheetNam
             ImportColumn("Start Month", false, "1–12 (blank = keep current; June for a new class)", "6"),
             ImportColumn("Start Day", false, "1–31 (blank = keep current; 1 for a new class)", "1"),
             ImportColumn("Period (Months)", false, "1–24 (blank = keep current; default months for a new class)", "12", listOf("Period", "Months")),
+            ImportColumn("Fees for All Students", false, "Yes = instrument and entrance fees apply to this class; No = not (blank = keep current; Yes for a new class)", "Yes", listOf("Fees for all", "Common Fees")),
+            ImportColumn("Training Options", false, "Extra training fees students can choose, e.g. Advanced=300000; Private=400000 (blank = keep current)", "", listOf("Training Choices")),
+            ImportColumn("Book Options", false, "Extra book fees students can choose, e.g. Workbook=15000; Dictionary=8000 (blank = keep current)", "", listOf("Book Choices")),
         ),
     );
 
@@ -314,8 +328,19 @@ object ModuleImporter {
         val book = if (bookText.isEmpty()) BookType.INTERNATIONAL else BookType.parse(bookText)
             ?: run { issues += ImportIssue(sheet, r.line, "$who: book type '$bookText' – International used", false); BookType.INTERNATIONAL }
         val termText = r.text(k("Payment Term"))
-        val term = if (termText.isEmpty()) PaymentTerm.THREE_INST else PaymentTerm.parse(termText)
-            ?: run { issues += ImportIssue(sheet, r.line, "$who: payment term '$termText' – 3-Inst used", false); PaymentTerm.THREE_INST }
+        val plan = if (termText.isEmpty()) PaymentPlan(PaymentTerm.THREE_INST) else PaymentPlan.parse(termText)
+            ?: run { issues += ImportIssue(sheet, r.line, "$who: payment term '$termText' – 3-Inst used", false); PaymentPlan(PaymentTerm.THREE_INST) }
+        val term = plan.term
+        var choice = FeeChoice.fromTexts(r.text(k("Training Option")), r.text(k("Book Options")))
+        val rate = card.rateFor(cls)!!
+        if (choice.training != FeeChoice.STANDARD && choice.training != FeeChoice.NONE) {
+            val o = rate.option(FeeKind.TRAINING, choice.training)
+            if (o == null) { issues += ImportIssue(sheet, r.line, "$who: $cls has no training option '${choice.training}' – standard training fee used", false); choice = choice.copy(training = FeeChoice.STANDARD) }
+            else choice = choice.copy(training = o.name)
+        }
+        val books = choice.books.mapNotNull { b -> rate.option(FeeKind.BOOK, b)?.name ?: run { issues += ImportIssue(sheet, r.line, "$who: $cls has no book option '$b' – ignored", false); null } }
+        // every listed book unknown → keep the standard book rather than charging no book at all
+        choice = choice.copy(books = books, standardBook = choice.standardBook || (books.isEmpty() && choice.books.isNotEmpty()))
         val bp = Fields.discountBp(r.cell(k("Discount %")), who) { issues += ImportIssue(sheet, r.line, it, false) }
         val startCell = r.cell(k("Start Date"))
         val start = Fields.date(startCell)
@@ -323,7 +348,8 @@ object ModuleImporter {
         val periodText = r.text(k("Period (Months)"))
         val period = r.number(k("Period (Months)"))?.toInt()?.takeIf { it in 1..24 }
         if (period == null && periodText.isNotEmpty()) issues += ImportIssue(sheet, r.line, "$who: period '$periodText' must be 1–24 months – class default used", false)
-        return ImportedEnrollment(cls, r.text(k("Academic Year")).ifEmpty { null }, start, period, type, status, book, bp, term, r.text(k("Remarks")))
+        return ImportedEnrollment(cls, r.text(k("Academic Year")).ifEmpty { null }, start, period, type, status, book, bp, term, r.text(k("Remarks")),
+            termParts = plan.parts, termEvery = plan.everyMonths, choice = choice)
     }
 
     private fun payment(r: RawRow, sheet: String, issues: MutableList<ImportIssue>): ImportedPayment? {
@@ -355,6 +381,11 @@ object ModuleImporter {
             if (v == null || v < 0) { issues += ImportIssue(sheet, r.line, "$cls: $h '$t' is not a valid amount – row skipped", true); bad = true; return null }
             return Math.round(v)
         }
+        fun options(kind: FeeKind, h: String): List<FeeOption>? {
+            val t = r.text(k(h))
+            if (t.isEmpty()) return null
+            return FeeOption.parseList(kind, t) ?: run { issues += ImportIssue(sheet, r.line, "$cls: $h '$t' must look like Name=amount; Name2=amount – current options kept", false); null }
+        }
         fun int(h: String, range: IntRange): Int? {
             val t = r.text(k(h))
             if (t.isEmpty()) return null
@@ -364,6 +395,12 @@ object ModuleImporter {
         val u = ClassRateUpdate(
             cls, money("Training Fee"), money("Book Day-Myanmar"), money("Book Day-Intl"), money("Book Hostel-Myanmar"), money("Book Hostel-Intl"), money("Hostel Fee"),
             int("Start Month", 1..12), int("Start Day", 1..31), int("Period (Months)", 1..24),
+            commonFees = r.text(k("Fees for All Students")).let { t ->
+                when { t.isEmpty() -> null; Fields.yes(t) -> true; Fields.no(t) -> false
+                    else -> { issues += ImportIssue(sheet, r.line, "$cls: Fees for All Students '$t' must be Yes or No – current value kept", false); null } }
+            },
+            trainingOptions = options(FeeKind.TRAINING, "Training Options"),
+            bookOptions = options(FeeKind.BOOK, "Book Options"),
         )
         return if (bad) null else u
     }

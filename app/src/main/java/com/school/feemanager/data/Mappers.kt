@@ -5,6 +5,8 @@ import com.school.feemanager.domain.ClassRate
 import com.school.feemanager.domain.EnrollmentRecord
 import com.school.feemanager.domain.FeeAssessment
 import com.school.feemanager.domain.FeeRateCard
+import com.school.feemanager.domain.FeeChoice
+import com.school.feemanager.domain.FeeOption
 import com.school.feemanager.domain.PaymentRecord
 import com.school.feemanager.domain.PaymentTerm
 import com.school.feemanager.domain.ReceiptRecord
@@ -16,13 +18,14 @@ import java.time.LocalDate
 
 fun FeeRateEntity.toDomain() = ClassRate(
     className, sortOrder, trainingFee, bookDayMyanmar, bookDayIntl, bookHostelMyanmar, bookHostelIntl, hostelFee,
-    startMonth, startDay, periodMonths,
+    startMonth, startDay, periodMonths, commonFees, FeeOption.decode(feeOptions),
 )
 
 fun ClassRate.toEntity() = FeeRateEntity(
     className = className, sortOrder = sortOrder, trainingFee = trainingFee, bookDayMyanmar = bookDayMyanmar,
     bookDayIntl = bookDayIntl, bookHostelMyanmar = bookHostelMyanmar, bookHostelIntl = bookHostelIntl, hostelFee = hostelFee,
     startMonth = startMonth, startDay = startDay, periodMonths = periodMonths,
+    commonFees = commonFees, feeOptions = FeeOption.encode(options),
 )
 
 fun rateCardOf(settings: SchoolSettingsEntity, rates: List<FeeRateEntity>) = FeeRateCard(
@@ -44,6 +47,7 @@ fun EnrollmentEntity.toDomain() = EnrollmentRecord(
     type = StudentType.valueOf(studentType), status = StudentStatus.valueOf(studentStatus),
     bookType = BookType.valueOf(bookType), term = PaymentTerm.valueOf(paymentTerm),
     discountBp = discountBp, remarks = remarks, active = active, createdOn = LocalDate.ofEpochDay(createdOn),
+    termParts = termParts, termEvery = termEvery, choice = FeeChoice.decode(feeChoice),
 )
 
 fun EnrollmentEntity.fee() = FeeAssessment(trainingFee, instrumentFee, bookFee, hostelFee, laundryFee, entranceFee, discountBp)
